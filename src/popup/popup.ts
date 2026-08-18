@@ -368,14 +368,13 @@ document.addEventListener("click", (event) => {
 
 monitorButton.addEventListener("click", () => void startMonitoring());
 stopButton.addEventListener("click", () => void stopMonitoring());
-mapButton.addEventListener("click", () => void openOrFocusMapTab());
-aboutButton.addEventListener("click", () => chrome.tabs.create({ url: chrome.runtime.getURL("dist/about.html") }));
+mapButton.addEventListener("click", () => void openOrFocusTab("mapTabId", "dist/map.html"));
+aboutButton.addEventListener("click", () => void openOrFocusTab("aboutTabId", "dist/about.html"));
 
-const MAP_TAB_ID_KEY = "mapTabId";
-
-async function openOrFocusMapTab(): Promise<void> {
-  const stored = await chrome.storage.session.get(MAP_TAB_ID_KEY);
-  const tabId = stored[MAP_TAB_ID_KEY] as number | undefined;
+/** Reuses an already-open tab for a given extension page instead of stacking up duplicates. */
+async function openOrFocusTab(sessionKey: string, pagePath: string): Promise<void> {
+  const stored = await chrome.storage.session.get(sessionKey);
+  const tabId = stored[sessionKey] as number | undefined;
 
   if (tabId !== undefined) {
     try {
@@ -388,8 +387,8 @@ async function openOrFocusMapTab(): Promise<void> {
     }
   }
 
-  const created = await chrome.tabs.create({ url: chrome.runtime.getURL("dist/map.html") });
-  if (created.id !== undefined) await chrome.storage.session.set({ [MAP_TAB_ID_KEY]: created.id });
+  const created = await chrome.tabs.create({ url: chrome.runtime.getURL(pagePath) });
+  if (created.id !== undefined) await chrome.storage.session.set({ [sessionKey]: created.id });
 }
 
 settingsToggle.addEventListener("click", () => settingsPanel.classList.toggle("open"));
