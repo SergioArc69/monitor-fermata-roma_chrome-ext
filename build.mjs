@@ -28,6 +28,7 @@ function copyStaticAssets() {
   cpSync("src/popup/popup.html", "dist/popup.html");
   cpSync("src/fullpage/map.html", "dist/map.html");
   cpSync("src/about/about.html", "dist/about.html");
+  cpSync("src/privacy/privacy.html", "dist/privacy.html");
 }
 
 if (watch) {

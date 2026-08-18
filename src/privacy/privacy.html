@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <title>Informativa sulla privacy — Monitor Fermata ATAC Roma</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body {
+        max-width: 640px;
+        margin: 0 auto;
+        padding: 32px 20px 60px;
+        font-family: system-ui, sans-serif;
+        line-height: 1.6;
+        color: #1a1a1a;
+      }
+      h1 {
+        font-size: 22px;
+      }
+      h2 {
+        font-size: 16px;
+        margin-top: 28px;
+      }
+      .updated {
+        color: #777;
+        font-size: 13px;
+      }
+      code {
+        background: #f4f4f4;
+        padding: 1px 5px;
+        border-radius: 3px;
+        font-size: 90%;
+      }
+    </style>
+  </head>
+  <body>
+    <p><a href="about.html">← Informazioni</a></p>
+    <h1>Informativa sulla privacy</h1>
+    <p class="updated">Ultimo aggiornamento: 18 agosto 2026</p>
+
+    <p>
+      "Monitor Fermata ATAC Roma" è un'estensione per browser Chromium (Chrome, Edge, Brave,
+      Opera, Vivaldi) sviluppata come progetto personale/open source. Questa pagina spiega quali
+      dati l'estensione utilizza e come.
+    </p>
+
+    <h2>Nessuna raccolta o trasmissione di dati personali</h2>
+    <p>
+      L'estensione non ha un proprio server: non esiste alcun backend che riceve, memorizza o
+      elabora i tuoi dati. Non vengono usati strumenti di analisi, tracciamento o pubblicità.
+      Tutti i dati che l'estensione gestisce restano esclusivamente sul tuo dispositivo, salvati
+      tramite le API di storage locale del browser (<code>chrome.storage.local</code> /
+      IndexedDB), e non sono mai inviati a terze parti diverse dai servizi elencati sotto.
+    </p>
+
+    <h2>Dati salvati localmente</h2>
+    <ul>
+      <li>Codice della fermata monitorata e delle fermate cercate di recente</li>
+      <li>Preferenze di notifica (soglia minuti, fascia oraria) e filtro linee</li>
+      <li>Copia in cache dei dati statici GTFS (orari/fermate/linee), per ridurre le richieste di rete</li>
+    </ul>
+
+    <h2>Geolocalizzazione</h2>
+    <p>
+      La pagina della mappa può chiedere il permesso di accesso alla tua posizione, tramite la
+      normale funzione del browser (<code>navigator.geolocation</code>), esclusivamente per
+      centrare la mappa sulle fermate vicine a te. La posizione viene usata solo localmente nel
+      browser e non viene mai inviata a nessun server, né salvata in modo permanente.
+    </p>
+
+    <h2>Servizi esterni contattati</h2>
+    <p>L'estensione comunica direttamente, dal tuo browser, con:</p>
+    <ul>
+      <li>
+        <strong>Roma Mobilità</strong> (<code>romamobilita.it</code>) — per scaricare gli orari
+        statici (GTFS) e gli aggiornamenti in tempo reale (GTFS-RT) di bus e metro. Si tratta di
+        dati aperti pubblici; la richiesta include i normali metadati tecnici di una richiesta
+        HTTP (es. indirizzo IP), come per qualsiasi sito web visitato.
+      </li>
+      <li>
+        <strong>OpenStreetMap</strong> (tile del server <code>tile.openstreetmap.org</code>) —
+        per visualizzare la mappa. Vedi la
+        <a href="https://wiki.osmfoundation.org/wiki/Privacy_Policy" target="_blank" rel="noopener"
+          >informativa privacy di OpenStreetMap Foundation</a
+        >.
+      </li>
+    </ul>
+
+    <h2>Permessi richiesti dall'estensione</h2>
+    <ul>
+      <li><code>storage</code> — per salvare le tue impostazioni e i dati GTFS in cache, localmente</li>
+      <li><code>alarms</code> — per aggiornare periodicamente gli arrivi in background</li>
+      <li><code>notifications</code> — per mostrarti la notifica di avviso bus in arrivo</li>
+      <li>accesso a <code>romamobilita.it</code> — per scaricare i dati orari/posizioni bus</li>
+    </ul>
+
+    <h2>Codice sorgente</h2>
+    <p>
+      Il codice è interamente open source e consultabile su
+      <a href="https://github.com/SergioArc69/monitor-fermata-roma_chrome-ext" target="_blank" rel="noopener"
+        >GitHub</a
+      >.
+    </p>
+
+    <h2>Contatti</h2>
+    <p>
+      Per domande su questa informativa puoi aprire una
+      <a href="https://github.com/SergioArc69/monitor-fermata-roma_chrome-ext/issues" target="_blank" rel="noopener"
+        >issue su GitHub</a
+      >.
+    </p>
+  </body>
+</html>
