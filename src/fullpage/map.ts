@@ -1,0 +1,242 @@
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+import { GtfsStaticData } from "../data/gtfsStaticData.js";
+import { GtfsRealtimeService } from "../data/gtfsRealtimeService.js";
+import { VehiclePositionsService } from "../data/vehiclePositionsService.js";
+import { getMonitoredStopId, startMonitoringStop } from "../shared/monitoringController.js";
+import type { ArrivalInfo } from "../shared/models.js";
+import { minutesLabel } from "../shared/arrivalFormatting.js";
+
+const MAX_VISIBLE_STOPS = 150;
+const BUS_REFRESH_INTERVAL_MS = 15_000;
+const ROME_FALLBACK = { lat: 41.9028, lon: 12.4964 };
+
+const instructionEl = document.getElementById("instruction") as HTMLDivElement;
+const mapEl = document.getElementById("map") as HTMLDivElement;
+const busStatusBarEl = document.getElementById("busStatusBar") as HTMLDivElement;
+
+const staticData = new GtfsStaticData();
+const realtimeService = new GtfsRealtimeService(staticData);
+const vehiclePositions = new VehiclePositionsService();
+
+const stopIcon = L.divIcon({ className: "stop-icon", html: "📍", iconSize: [22, 22] });
+const monitoredStopIcon = L.divIcon({ className: "stop-icon monitored", html: "🚏", iconSize: [24, 24] });
+
+let map: L.Map;
+let meMarker: L.CircleMarker | null = null;
+const stopMarkers = new Map<string, L.Marker>();
+const busMarkers = new Map<string, L.Marker>();
+let viewportDebounceTimer: number | undefined;
+
+async function init(): Promise<void> {
+  instructionEl.textContent = "Caricamento dati...";
+  try {
+    await staticData.load();
+  } catch (error) {
+    instructionEl.textContent = `Impossibile caricare i dati GTFS statici: ${(error as Error).message}`;
+    return;
+  }
+  // Background, best-effort: populates tryGetStopModes for the tooltips below once the multi-second
+  // scan completes. Tooltips just show without the mode line until then.
+  void staticData.buildStopIndexes();
+
+  const monitoredStopId = await getMonitoredStopId();
+  if (monitoredStopId) {
+    await enterMonitorMode(monitoredStopId);
+  } else {
+    await enterBrowseMode();
+  }
+}
+
+async function enterMonitorMode(stopId: string): Promise<void> {
+  const location = staticData.tryGetStopLocation(stopId);
+  if (!location) {
+    instructionEl.textContent = `Fermata ${stopId} non trovata nei dati statici: mostro comunque la mappa di Roma.`;
+    await enterBrowseMode();
+    return;
+  }
+
+  instructionEl.textContent = "Fermata monitorata, con la posizione dei bus in transito (aggiornata ogni 15 secondi).";
+  mapEl.classList.add("with-bus-bar");
+  busStatusBarEl.style.display = "flex";
+
+  if (!map) createMap(location.lat, location.lon, 16);
+  else map.setView([location.lat, location.lon], 16);
+
+  const stopName = staticData.tryGetStopName(stopId) ?? "";
+  addStopMarker(stopId, location.lat, location.lon, buildStopTooltip(stopId, stopName), false);
+
+  await refreshBusPositions(stopId);
+  setInterval(() => void refreshBusPositions(stopId), BUS_REFRESH_INTERVAL_MS);
+}
+
+async function enterBrowseMode(): Promise<void> {
+  const location = await getCurrentLocation();
+  const lat = location?.lat ?? ROME_FALLBACK.lat;
+  const lon = location?.lon ?? ROME_FALLBACK.lon;
+
+  instructionEl.textContent = location
+    ? "Fermate vicino alla tua posizione: clicca su una fermata per monitorarla, oppure sposta o zooma la mappa per cercarne altre."
+    : "Posizione non disponibile: mostro le fermate del centro di Roma. Clicca su una fermata per monitorarla, oppure sposta o zooma la mappa per cercarne altre.";
+
+  if (!map) createMap(lat, lon, 16);
+  else map.setView([lat, lon], 16);
+  addMeMarker(lat, lon);
+
+  map.on("moveend", onViewportMoveEnd);
+
+  await refreshStopsInViewport();
+}
+
+function onViewportMoveEnd(): void {
+  window.clearTimeout(viewportDebounceTimer);
+  viewportDebounceTimer = window.setTimeout(() => void refreshStopsInViewport(), 500);
+}
+
+async function refreshStopsInViewport(): Promise<void> {
+  const bounds = map.getBounds();
+  clearStopMarkers();
+
+  const stops = staticData.getStopsInBounds(
+    bounds.getNorth(),
+    bounds.getSouth(),
+    bounds.getEast(),
+    bounds.getWest(),
+    MAX_VISIBLE_STOPS
+  );
+  for (const stop of stops) {
+    addStopMarker(stop.stopId, stop.lat, stop.lon, buildStopTooltip(stop.stopId, stop.stopName), true);
+  }
+}
+
+async function selectStop(stopId: string): Promise<void> {
+  await startMonitoringStop(stopId);
+
+  // Leave browse mode for good: without this, the viewport 'moveend' listener stays registered,
+  // and the map.setView() inside enterMonitorMode (below) fires 'moveend' itself — which would
+  // silently repopulate the map with clickable nearby-stop markers a moment later, undoing the
+  // switch to monitor mode.
+  map.off("moveend", onViewportMoveEnd);
+  window.clearTimeout(viewportDebounceTimer);
+
+  clearStopMarkers();
+  if (meMarker) {
+    map.removeLayer(meMarker);
+    meMarker = null;
+  }
+  await enterMonitorMode(stopId);
+}
+
+async function refreshBusPositions(stopId: string): Promise<void> {
+  try {
+    const arrivals = await realtimeService.getArrivalsForStop(stopId);
+    const arrivalByTripId = new Map<string, ArrivalInfo>();
+    for (const arrival of arrivals) {
+      if (!arrivalByTripId.has(arrival.tripId)) arrivalByTripId.set(arrival.tripId, arrival);
+    }
+
+    clearBusMarkers();
+
+    if (arrivalByTripId.size === 0) {
+      busStatusBarEl.innerHTML = "";
+      return;
+    }
+
+    const positions = await vehiclePositions.getPositionsForTrips(new Set(arrivalByTripId.keys()));
+
+    busStatusBarEl.innerHTML = "";
+    for (const position of positions) {
+      const label = position.vehicleLabel || "?";
+      const arrival = arrivalByTripId.get(position.tripId);
+      const etaLabel = arrival ? buildEtaLabel(arrival) : "";
+      const statusLabel = position.isStopped ? "fermo" : "in movimento";
+
+      addBusMarker(position.tripId, position.lat, position.lon, label, position.isStopped, etaLabel);
+
+      const chip = document.createElement("span");
+      chip.className = "bus-chip";
+      chip.textContent = etaLabel ? `🚌 ${label}: ${statusLabel} — ${etaLabel}` : `🚌 ${label}: ${statusLabel}`;
+      busStatusBarEl.appendChild(chip);
+    }
+  } catch (error) {
+    console.error("[map] errore durante l'aggiornamento delle posizioni bus:", error);
+  }
+}
+
+function buildEtaLabel(arrival: ArrivalInfo): string {
+  const label = minutesLabel(arrival);
+  const prefix = label === "in arrivo" ? "" : "tra ";
+  return `${prefix}${label} (${arrival.arrivalTime.toLocaleTimeString("it-IT")})`;
+}
+
+function buildStopTooltip(stopId: string, stopName: string): string {
+  let tooltip = `<b>${escapeHtml(stopId)}</b> — ${escapeHtml(stopName)}`;
+  const modes = staticData.tryGetStopModes(stopId);
+  if (modes) tooltip += `<br><i>${escapeHtml(modes)}</i>`;
+  return tooltip;
+}
+
+function createMap(lat: number, lon: number, zoom: number): void {
+  map = L.map(mapEl).setView([lat, lon], zoom);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: "&copy; OpenStreetMap contributors",
+  }).addTo(map);
+}
+
+function addStopMarker(stopId: string, lat: number, lon: number, tooltipHtml: string, selectable: boolean): void {
+  const marker = L.marker([lat, lon], { icon: selectable ? stopIcon : monitoredStopIcon })
+    .addTo(map)
+    .bindTooltip(tooltipHtml, { direction: "top", offset: [0, -14] });
+  if (selectable) {
+    marker.on("click", () => void selectStop(stopId));
+  }
+  stopMarkers.set(stopId, marker);
+}
+
+function addBusMarker(tripId: string, lat: number, lon: number, label: string, isStopped: boolean, etaLabel: string): void {
+  const icon = L.divIcon({ className: `bus-icon ${isStopped ? "stopped" : "moving"}`, html: "🚌", iconSize: [24, 24] });
+  let popup = `${escapeHtml(label)} — ${isStopped ? "fermo" : "in movimento"}`;
+  if (etaLabel) popup += `<br>${escapeHtml(etaLabel)}`;
+  const marker = L.marker([lat, lon], { icon }).addTo(map).bindPopup(popup);
+  busMarkers.set(tripId, marker);
+}
+
+function addMeMarker(lat: number, lon: number): void {
+  if (meMarker) map.removeLayer(meMarker);
+  meMarker = L.circleMarker([lat, lon], { radius: 8, color: "#1a73e8", fillColor: "#1a73e8", fillOpacity: 0.9 })
+    .addTo(map)
+    .bindPopup("La tua posizione");
+}
+
+function clearStopMarkers(): void {
+  for (const marker of stopMarkers.values()) map.removeLayer(marker);
+  stopMarkers.clear();
+}
+
+function clearBusMarkers(): void {
+  for (const marker of busMarkers.values()) map.removeLayer(marker);
+  busMarkers.clear();
+}
+
+function getCurrentLocation(): Promise<{ lat: number; lon: number } | null> {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      resolve(null);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => resolve({ lat: position.coords.latitude, lon: position.coords.longitude }),
+      () => resolve(null),
+      { timeout: 10_000, maximumAge: 5 * 60_000 }
+    );
+  });
+}
+
+function escapeHtml(value: string): string {
+  const div = document.createElement("div");
+  div.textContent = value;
+  return div.innerHTML;
+}
+
+void init();

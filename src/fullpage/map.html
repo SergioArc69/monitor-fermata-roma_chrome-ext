@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <title>Mappa — Monitor Fermata ATAC Roma</title>
+    <link rel="stylesheet" href="map.css" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        font-family: system-ui, sans-serif;
+        font-size: 13px;
+      }
+      #instruction {
+        padding: 8px 14px;
+        background: #f4f4f4;
+        border-bottom: 1px solid #ddd;
+      }
+      #map {
+        position: absolute;
+        top: 37px;
+        bottom: 0;
+        left: 0;
+        right: 0;
+      }
+      #map.with-bus-bar {
+        bottom: 56px;
+      }
+      #busStatusBar {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 56px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        white-space: nowrap;
+        padding: 0 10px;
+        align-items: center;
+        background: #f9f9f9;
+        border-top: 1px solid #ddd;
+        display: none;
+      }
+      .bus-chip {
+        display: inline-block;
+        background: #ededed;
+        border-radius: 4px;
+        padding: 4px 8px;
+        margin-right: 6px;
+        font-size: 12px;
+      }
+      .stop-icon,
+      .bus-icon {
+        font-size: 20px;
+        text-align: center;
+        line-height: 22px;
+        filter: drop-shadow(0 0 2px white);
+      }
+      .stop-icon.monitored {
+        font-size: 22px;
+      }
+      .bus-icon.stopped {
+        filter: drop-shadow(0 0 3px #d32f2f) drop-shadow(0 0 3px #d32f2f);
+      }
+      .bus-icon.moving {
+        filter: drop-shadow(0 0 3px #2e7d32) drop-shadow(0 0 3px #2e7d32);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="instruction">Caricamento mappa...</div>
+    <div id="map"></div>
+    <div id="busStatusBar"></div>
+    <script type="module" src="map.js"></script>
+  </body>
+</html>

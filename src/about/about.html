@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <title>Informazioni — Monitor Fermata ATAC Roma</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 32px 20px;
+        font-family: system-ui, sans-serif;
+        color: #1a1a1a;
+        background: #ffffff;
+        display: flex;
+        justify-content: center;
+      }
+      .card {
+        width: 100%;
+        max-width: 360px;
+        text-align: center;
+      }
+      img {
+        width: 64px;
+        height: 64px;
+        margin-bottom: 12px;
+      }
+      h1 {
+        font-size: 17px;
+        margin: 0 0 4px;
+      }
+      #version {
+        color: #777;
+        font-size: 12px;
+        margin: 0 0 16px;
+      }
+      .author {
+        margin: 0 0 10px;
+        font-size: 13px;
+      }
+      .links {
+        margin: 0 0 18px;
+        font-size: 13px;
+      }
+      .links a {
+        display: block;
+        color: #1a73e8;
+        text-decoration: none;
+        margin-bottom: 6px;
+      }
+      .links a:hover {
+        text-decoration: underline;
+      }
+      .credits p {
+        color: #777;
+        font-size: 11px;
+        line-height: 1.5;
+        margin: 0 0 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <img src="../assets/icons/icon128.png" alt="Icona" />
+      <h1>Monitor Fermata ATAC Roma</h1>
+      <p id="version"></p>
+      <p class="author">di <strong>Sergio Arcangeli</strong></p>
+      <div class="links">
+        <a href="https://github.com/SergioArc69/monitor-fermata-roma_chrome-ext" target="_blank" rel="noopener">Repository su GitHub</a>
+        <a href="https://github.com/SergioArc69/monitor-fermata-roma_chrome-ext/releases" target="_blank" rel="noopener">Ultime versioni (Releases)</a>
+        <a href="https://sergioarc69.github.io/monitor-fermata-roma_chrome-ext/privacy.html" target="_blank" rel="noopener">Informativa sulla privacy</a>
+      </div>
+      <div class="credits">
+        <p>Dati orari e posizioni bus da Roma Mobilità (GTFS / GTFS-RT open data).</p>
+        <p>Mappe © collaboratori di OpenStreetMap.</p>
+        <p>Software rilasciato nel pubblico dominio (Unlicense).</p>
+      </div>
+    </div>
+    <script type="module" src="about.js"></script>
+  </body>
+</html>

@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <title>Monitor Fermata ATAC Roma</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+      body {
+        width: 440px;
+        margin: 0;
+        padding: 12px;
+        font-family: system-ui, sans-serif;
+        font-size: 13px;
+        color: #1a1a1a;
+        background: #ffffff;
+      }
+      h1 {
+        font-size: 14px;
+        margin: 0 0 10px;
+      }
+      .search-row {
+        position: relative;
+        display: flex;
+        gap: 6px;
+        margin-bottom: 6px;
+      }
+      #stopInput {
+        flex: 1;
+        padding: 6px 8px;
+        font-size: 13px;
+        border: 1px solid #bbb;
+        border-radius: 4px;
+      }
+      button {
+        padding: 6px 12px;
+        font-size: 13px;
+        border: 1px solid #bbb;
+        border-radius: 4px;
+        background: #f4f4f4;
+        cursor: pointer;
+      }
+      button:hover:not(:disabled) {
+        background: #e8e8e8;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      #suggestions {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: white;
+        border: 1px solid #bbb;
+        border-top: none;
+        border-radius: 0 0 4px 4px;
+        max-height: 180px;
+        overflow-y: auto;
+        z-index: 10;
+        display: none;
+      }
+      #suggestions div {
+        padding: 5px 8px;
+        cursor: pointer;
+      }
+      #suggestions div:hover {
+        background: #eef4ff;
+      }
+      #stopHint {
+        font-style: italic;
+        color: #666;
+        min-height: 16px;
+        margin-bottom: 4px;
+      }
+
+      .settings-toggle-row {
+        display: flex;
+        justify-content: flex-end;
+        gap: 4px;
+        margin-bottom: 4px;
+      }
+      #settingsToggle,
+      #aboutButton {
+        background: none;
+        border: none;
+        color: #555;
+        cursor: pointer;
+        padding: 2px 4px;
+        font-size: 12px;
+      }
+      #settingsPanel {
+        display: none;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 8px;
+        margin-bottom: 8px;
+        background: #fafafa;
+      }
+      #settingsPanel.open {
+        display: block;
+      }
+      .settings-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-bottom: 6px;
+        font-size: 12px;
+      }
+      .settings-row:last-child {
+        margin-bottom: 0;
+      }
+      #minutesThreshold {
+        width: 44px;
+      }
+      input[type="time"] {
+        font-size: 12px;
+      }
+
+      .body-row {
+        display: flex;
+        gap: 10px;
+      }
+      #lineFilterPanel {
+        width: 100px;
+        flex-shrink: 0;
+      }
+      #lineFilterPanel h3 {
+        font-size: 12px;
+        margin: 0 0 4px;
+        font-weight: normal;
+      }
+      #lineFilterList {
+        border: 1px solid #ccc;
+        border-radius: 3px;
+        max-height: 240px;
+        overflow-y: auto;
+        background: white;
+      }
+      #lineFilterList label {
+        display: block;
+        padding: 3px 5px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      #lineFilterList label:hover {
+        background: #eef4ff;
+      }
+
+      #arrivalsColumn {
+        flex: 1;
+        min-width: 0;
+      }
+      #status {
+        color: #666;
+        margin-top: 8px;
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .spinner {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border: 2px solid #ccc;
+        border-top-color: #666;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        flex-shrink: 0;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      #arrivals.loading {
+        color: #888;
+        font-style: italic;
+        padding: 8px 4px;
+      }
+      .arrivals-group {
+        margin-bottom: 8px;
+      }
+      .arrivals-group h2 {
+        font-size: 12px;
+        font-weight: bold;
+        background: #ededed;
+        padding: 4px 6px;
+        margin: 0 0 2px;
+        border-radius: 3px;
+      }
+      .arrival-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 3px 6px;
+      }
+      .arrival-row .destination {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .arrival-row .minutes {
+        color: #333;
+        white-space: nowrap;
+      }
+      #arrivals {
+        max-height: 260px;
+        overflow-y: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Monitor Fermata ATAC Roma</h1>
+
+    <div class="search-row">
+      <button id="mapButton" title="Mostra mappa">🗺</button>
+      <input id="stopInput" type="text" placeholder="Cerca fermata (codice o nome)" autocomplete="off" />
+      <button id="monitorButton">Monitora</button>
+      <button id="stopButton" disabled>Ferma</button>
+      <div id="suggestions"></div>
+    </div>
+    <div id="stopHint"></div>
+
+    <div class="settings-toggle-row">
+      <button id="aboutButton" title="Informazioni">ℹ</button>
+      <button id="settingsToggle">⚙ Notifiche</button>
+    </div>
+    <div id="settingsPanel">
+      <div class="settings-row">
+        <label><input type="checkbox" id="notifyEnabled" /> Notifica quando mancano meno di</label>
+        <input type="number" id="minutesThreshold" min="1" max="60" />
+        <span>minuti</span>
+      </div>
+      <div class="settings-row">
+        <span>tra le</span>
+        <input type="time" id="notifyFrom" />
+        <span>e le</span>
+        <input type="time" id="notifyTo" />
+      </div>
+    </div>
+
+    <div class="body-row">
+      <div id="lineFilterPanel">
+        <h3><label><input type="checkbox" id="lineFilterEnabled" /> Filtra per linea</label></h3>
+        <div id="lineFilterList"></div>
+      </div>
+      <div id="arrivalsColumn">
+        <div id="arrivals"></div>
+      </div>
+    </div>
+
+    <div id="status">Caricamento dati...</div>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
