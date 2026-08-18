@@ -10,6 +10,7 @@ import { minutesLabel } from "../shared/arrivalFormatting.js";
 const MAX_VISIBLE_STOPS = 150;
 const BUS_REFRESH_INTERVAL_MS = 15_000;
 const ROME_FALLBACK = { lat: 41.9028, lon: 12.4964 };
+const MAX_DISTANCE_FROM_ROME_KM = 50;
 
 const instructionEl = document.getElementById("instruction") as HTMLDivElement;
 const mapEl = document.getElementById("map") as HTMLDivElement;
@@ -71,7 +72,9 @@ async function enterMonitorMode(stopId: string): Promise<void> {
 }
 
 async function enterBrowseMode(): Promise<void> {
-  const location = await getCurrentLocation();
+  const rawLocation = await getCurrentLocation();
+  const location =
+    rawLocation && distanceKm(rawLocation, ROME_FALLBACK) <= MAX_DISTANCE_FROM_ROME_KM ? rawLocation : null;
   const lat = location?.lat ?? ROME_FALLBACK.lat;
   const lon = location?.lon ?? ROME_FALLBACK.lon;
 
@@ -231,6 +234,20 @@ function getCurrentLocation(): Promise<{ lat: number; lon: number } | null> {
       { timeout: 10_000, maximumAge: 5 * 60_000 }
     );
   });
+}
+
+function distanceKm(a: { lat: number; lon: number }, b: { lat: number; lon: number }): number {
+  const EARTH_RADIUS_KM = 6371;
+  const dLat = toRadians(b.lat - a.lat);
+  const dLon = toRadians(b.lon - a.lon);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRadians(a.lat)) * Math.cos(toRadians(b.lat)) * Math.sin(dLon / 2) ** 2;
+  return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+function toRadians(degrees: number): number {
+  return (degrees * Math.PI) / 180;
 }
 
 function escapeHtml(value: string): string {
