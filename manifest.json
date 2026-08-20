@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Monitor Fermata ATAC Roma",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Orari di arrivo bus in tempo reale (GTFS-RT) per le fermate di Roma, con mappa e notifiche.",
   "icons": {
     "16": "assets/icons/icon16.png",
