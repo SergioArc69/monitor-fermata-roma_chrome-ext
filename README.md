@@ -24,6 +24,11 @@ orari di arrivo dei bus a Roma in tempo reale, usando i dati aperti GTFS / GTFS-
 - Codice: rilasciato nel pubblico dominio ([Unlicense](LICENSE))
 
 
+## Autore
+
+Sergio Arcangeli
+
+
 ## Privacy
 
 Vedi [privacy policy](docs/privacy.html).
