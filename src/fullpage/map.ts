@@ -3,7 +3,7 @@ import "leaflet/dist/leaflet.css";
 import { GtfsStaticData } from "../data/gtfsStaticData.js";
 import { GtfsRealtimeService } from "../data/gtfsRealtimeService.js";
 import { VehiclePositionsService } from "../data/vehiclePositionsService.js";
-import { getMonitoredStopId, startMonitoringStop } from "../shared/monitoringController.js";
+import { getMonitoredStopId, startMonitoringStop, stopMonitoringStop } from "../shared/monitoringController.js";
 import type { ArrivalInfo } from "../shared/models.js";
 import { minutesLabel } from "../shared/arrivalFormatting.js";
 
@@ -15,6 +15,7 @@ const MAX_DISTANCE_FROM_ROME_KM = 50;
 const instructionEl = document.getElementById("instruction") as HTMLDivElement;
 const mapEl = document.getElementById("map") as HTMLDivElement;
 const busStatusBarEl = document.getElementById("busStatusBar") as HTMLDivElement;
+const stopMonitoringButton = document.getElementById("stopMonitoringButton") as HTMLButtonElement;
 
 const staticData = new GtfsStaticData();
 const realtimeService = new GtfsRealtimeService(staticData);
@@ -28,6 +29,8 @@ let meMarker: L.CircleMarker | null = null;
 const stopMarkers = new Map<string, L.Marker>();
 const busMarkers = new Map<string, L.Marker>();
 let viewportDebounceTimer: number | undefined;
+let busRefreshTimer: number | undefined;
+let monitoredStopId: string | null = null;
 
 async function init(): Promise<void> {
   instructionEl.textContent = "Caricamento dati...";
@@ -41,15 +44,19 @@ async function init(): Promise<void> {
   // scan completes. Tooltips just show without the mode line until then.
   void staticData.buildStopIndexes();
 
-  const monitoredStopId = await getMonitoredStopId();
-  if (monitoredStopId) {
-    await enterMonitorMode(monitoredStopId);
+  const storedMonitoredStopId = await getMonitoredStopId();
+  if (storedMonitoredStopId) {
+    await enterMonitorMode(storedMonitoredStopId);
   } else {
     await enterBrowseMode();
   }
 }
 
 async function enterMonitorMode(stopId: string): Promise<void> {
+  monitoredStopId = stopId;
+  window.clearInterval(busRefreshTimer);
+  map?.off("moveend", onViewportMoveEnd);
+
   const location = staticData.tryGetStopLocation(stopId);
   if (!location) {
     instructionEl.textContent = `Fermata ${stopId} non trovata nei dati statici: mostro comunque la mappa di Roma.`;
@@ -58,6 +65,7 @@ async function enterMonitorMode(stopId: string): Promise<void> {
   }
 
   instructionEl.textContent = "Fermata monitorata, con la posizione dei bus in transito (aggiornata ogni 15 secondi).";
+  stopMonitoringButton.style.display = "block";
   mapEl.classList.add("with-bus-bar");
   busStatusBarEl.style.display = "flex";
 
@@ -68,11 +76,23 @@ async function enterMonitorMode(stopId: string): Promise<void> {
   addStopMarker(stopId, location.lat, location.lon, buildStopTooltip(stopId, stopName), false);
 
   await refreshBusPositions(stopId);
-  setInterval(() => void refreshBusPositions(stopId), BUS_REFRESH_INTERVAL_MS);
+  if (monitoredStopId === stopId) {
+    busRefreshTimer = window.setInterval(() => void refreshBusPositions(stopId), BUS_REFRESH_INTERVAL_MS);
+  }
 }
 
 async function enterBrowseMode(): Promise<void> {
+  monitoredStopId = null;
+  window.clearInterval(busRefreshTimer);
+  clearBusMarkers();
+  busStatusBarEl.innerHTML = "";
+  busStatusBarEl.style.display = "none";
+  mapEl.classList.remove("with-bus-bar");
+  stopMonitoringButton.style.display = "none";
+
   const rawLocation = await getCurrentLocation();
+  // Monitoring may have been restarted from the popup while geolocation was pending.
+  if (monitoredStopId) return;
   const location =
     rawLocation && distanceKm(rawLocation, ROME_FALLBACK) <= MAX_DISTANCE_FROM_ROME_KM ? rawLocation : null;
   const lat = location?.lat ?? ROME_FALLBACK.lat;
@@ -86,6 +106,7 @@ async function enterBrowseMode(): Promise<void> {
   else map.setView([lat, lon], 16);
   addMeMarker(lat, lon);
 
+  map.off("moveend", onViewportMoveEnd);
   map.on("moveend", onViewportMoveEnd);
 
   await refreshStopsInViewport();
@@ -113,6 +134,8 @@ async function refreshStopsInViewport(): Promise<void> {
 }
 
 async function selectStop(stopId: string): Promise<void> {
+  // Set this first so the storage listener does not start a second, overlapping transition.
+  monitoredStopId = stopId;
   await startMonitoringStop(stopId);
 
   // Leave browse mode for good: without this, the viewport 'moveend' listener stays registered,
@@ -133,6 +156,7 @@ async function selectStop(stopId: string): Promise<void> {
 async function refreshBusPositions(stopId: string): Promise<void> {
   try {
     const arrivals = await realtimeService.getArrivalsForStop(stopId);
+    if (monitoredStopId !== stopId) return;
     const arrivalByTripId = new Map<string, ArrivalInfo>();
     for (const arrival of arrivals) {
       if (!arrivalByTripId.has(arrival.tripId)) arrivalByTripId.set(arrival.tripId, arrival);
@@ -146,6 +170,7 @@ async function refreshBusPositions(stopId: string): Promise<void> {
     }
 
     const positions = await vehiclePositions.getPositionsForTrips(new Set(arrivalByTripId.keys()));
+    if (monitoredStopId !== stopId) return;
 
     busStatusBarEl.innerHTML = "";
     for (const position of positions) {
@@ -163,6 +188,33 @@ async function refreshBusPositions(stopId: string): Promise<void> {
     }
   } catch (error) {
     console.error("[map] errore durante l'aggiornamento delle posizioni bus:", error);
+  }
+}
+
+// The popup and this page share the monitoring state. Keep an already-open map in sync when
+// monitoring is started or stopped elsewhere, rather than waiting for the page to be reopened.
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "local" || !changes["monitoredStopId"]) return;
+
+  const stopId = changes["monitoredStopId"].newValue as string | undefined;
+  if (stopId) {
+    if (stopId !== monitoredStopId) void enterMonitorMode(stopId);
+  } else if (monitoredStopId) {
+    void enterBrowseMode();
+  }
+});
+
+stopMonitoringButton.addEventListener("click", () => void stopMonitoringFromMap());
+
+async function stopMonitoringFromMap(): Promise<void> {
+  stopMonitoringButton.disabled = true;
+  try {
+    // Clear local mode before storage emits its change event, so the map switches immediately.
+    monitoredStopId = null;
+    await stopMonitoringStop();
+    await enterBrowseMode();
+  } finally {
+    stopMonitoringButton.disabled = false;
   }
 }
 

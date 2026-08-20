@@ -13,10 +13,31 @@
         font-family: system-ui, sans-serif;
         font-size: 13px;
       }
-      #instruction {
+      #instructionBar {
+        height: 37px;
+        box-sizing: border-box;
         padding: 8px 14px;
         background: #f4f4f4;
         border-bottom: 1px solid #ddd;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      #instruction {
+        flex: 1;
+      }
+      #stopMonitoringButton {
+        display: none;
+        flex: none;
+        padding: 4px 9px;
+        border: 1px solid #b3261e;
+        border-radius: 4px;
+        color: #b3261e;
+        background: white;
+        cursor: pointer;
+      }
+      #stopMonitoringButton:hover {
+        background: #fce8e6;
       }
       #map {
         position: absolute;
@@ -70,7 +91,10 @@
     </style>
   </head>
   <body>
-    <div id="instruction">Caricamento mappa...</div>
+    <div id="instructionBar">
+      <div id="instruction">Caricamento mappa...</div>
+      <button id="stopMonitoringButton" type="button">Ferma monitoraggio</button>
+    </div>
     <div id="map"></div>
     <div id="busStatusBar"></div>
     <script type="module" src="map.js"></script>
