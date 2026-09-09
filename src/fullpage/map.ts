@@ -31,6 +31,11 @@ const busMarkers = new Map<string, L.Marker>();
 let viewportDebounceTimer: number | undefined;
 let busRefreshTimer: number | undefined;
 let monitoredStopId: string | null = null;
+// The upstream GTFS-RT feed drops a stop's stop_time_update entry almost as soon as the bus passes
+// it — it does NOT keep reporting it for minutes afterwards. So to keep recently-passed buses on
+// the map for a while, we have to remember their last-seen arrival ourselves, rather than expecting
+// the feed to still have it on a later poll. Reset whenever a (possibly different) stop is monitored.
+let recentArrivalsByTripId = new Map<string, ArrivalInfo>();
 
 async function init(): Promise<void> {
   instructionEl.textContent = "Caricamento dati...";
@@ -54,6 +59,7 @@ async function init(): Promise<void> {
 
 async function enterMonitorMode(stopId: string): Promise<void> {
   monitoredStopId = stopId;
+  recentArrivalsByTripId = new Map();
   window.clearInterval(busRefreshTimer);
   map?.off("moveend", onViewportMoveEnd);
 
@@ -153,36 +159,50 @@ async function selectStop(stopId: string): Promise<void> {
   await enterMonitorMode(stopId);
 }
 
+/** Buses that already passed the stop stay visible on the map, in blue, for this long afterwards. */
+const RECENTLY_PASSED_LOOKBACK_MINUTES = 10;
+
 async function refreshBusPositions(stopId: string): Promise<void> {
   try {
-    const arrivals = await realtimeService.getArrivalsForStop(stopId);
+    // Fetch only the "fresh" (not yet passed, modulo ~1 min feed lag) sightings for this tick, then
+    // merge into our own short-term memory — see recentArrivalsByTripId's comment for why.
+    const freshArrivals = await realtimeService.getArrivalsForStop(stopId);
     if (monitoredStopId !== stopId) return;
-    const arrivalByTripId = new Map<string, ArrivalInfo>();
-    for (const arrival of arrivals) {
-      if (!arrivalByTripId.has(arrival.tripId)) arrivalByTripId.set(arrival.tripId, arrival);
+
+    for (const arrival of freshArrivals) {
+      recentArrivalsByTripId.set(arrival.tripId, arrival);
+    }
+    const cutoff = Date.now() - RECENTLY_PASSED_LOOKBACK_MINUTES * 60_000;
+    for (const [tripId, arrival] of recentArrivalsByTripId) {
+      if (arrival.arrivalTime.getTime() < cutoff) recentArrivalsByTripId.delete(tripId);
     }
 
     clearBusMarkers();
 
-    if (arrivalByTripId.size === 0) {
+    if (recentArrivalsByTripId.size === 0) {
       busStatusBarEl.innerHTML = "";
       return;
     }
 
+    const arrivalByTripId = recentArrivalsByTripId;
     const positions = await vehiclePositions.getPositionsForTrips(new Set(arrivalByTripId.keys()));
     if (monitoredStopId !== stopId) return;
 
+    const now = Date.now();
     busStatusBarEl.innerHTML = "";
     for (const position of positions) {
-      const label = position.vehicleLabel || "?";
+      const vehicleLabel = position.vehicleLabel || "?";
       const arrival = arrivalByTripId.get(position.tripId);
-      const etaLabel = arrival ? buildEtaLabel(arrival) : "";
-      const statusLabel = position.isStopped ? "fermo" : "in movimento";
+      // Prefix with the route so it's clear which line each bus belongs to at stops served by several.
+      const label = arrival ? `[${arrival.routeLabel}] ${vehicleLabel}` : vehicleLabel;
+      const hasPassed = arrival !== undefined && arrival.arrivalTime.getTime() < now;
+      const etaLabel = arrival ? buildEtaLabel(arrival, hasPassed) : "";
+      const statusLabel = hasPassed ? "già passato" : position.isStopped ? "fermo" : "in movimento";
 
-      addBusMarker(position.tripId, position.lat, position.lon, label, position.isStopped, etaLabel);
+      addBusMarker(position.tripId, position.lat, position.lon, label, position.isStopped, etaLabel, hasPassed);
 
       const chip = document.createElement("span");
-      chip.className = "bus-chip";
+      chip.className = hasPassed ? "bus-chip passed" : "bus-chip";
       chip.textContent = etaLabel ? `🚌 ${label}: ${statusLabel} — ${etaLabel}` : `🚌 ${label}: ${statusLabel}`;
       busStatusBarEl.appendChild(chip);
     }
@@ -218,7 +238,12 @@ async function stopMonitoringFromMap(): Promise<void> {
   }
 }
 
-function buildEtaLabel(arrival: ArrivalInfo): string {
+function buildEtaLabel(arrival: ArrivalInfo, hasPassed: boolean): string {
+  if (hasPassed) {
+    const minutesAgo = Math.round((Date.now() - arrival.arrivalTime.getTime()) / 60_000);
+    const label = minutesAgo <= 0 ? "appena passato" : minutesAgo === 1 ? "passato 1 min fa" : `passato ${minutesAgo} min fa`;
+    return `${label} (${arrival.arrivalTime.toLocaleTimeString("it-IT")})`;
+  }
   const label = minutesLabel(arrival);
   const prefix = label === "in arrivo" ? "" : "tra ";
   return `${prefix}${label} (${arrival.arrivalTime.toLocaleTimeString("it-IT")})`;
@@ -249,9 +274,18 @@ function addStopMarker(stopId: string, lat: number, lon: number, tooltipHtml: st
   stopMarkers.set(stopId, marker);
 }
 
-function addBusMarker(tripId: string, lat: number, lon: number, label: string, isStopped: boolean, etaLabel: string): void {
-  const icon = L.divIcon({ className: `bus-icon ${isStopped ? "stopped" : "moving"}`, html: "🚌", iconSize: [24, 24] });
-  let popup = `${escapeHtml(label)} — ${isStopped ? "fermo" : "in movimento"}`;
+function addBusMarker(
+  tripId: string,
+  lat: number,
+  lon: number,
+  label: string,
+  isStopped: boolean,
+  etaLabel: string,
+  hasPassed: boolean
+): void {
+  const statusClass = hasPassed ? "passed" : isStopped ? "stopped" : "moving";
+  const icon = L.divIcon({ className: `bus-icon ${statusClass}`, html: "🚌", iconSize: [24, 24] });
+  let popup = `${escapeHtml(label)} — ${hasPassed ? "già passato" : isStopped ? "fermo" : "in movimento"}`;
   if (etaLabel) popup += `<br>${escapeHtml(etaLabel)}`;
   const marker = L.marker([lat, lon], { icon }).addTo(map).bindPopup(popup);
   busMarkers.set(tripId, marker);

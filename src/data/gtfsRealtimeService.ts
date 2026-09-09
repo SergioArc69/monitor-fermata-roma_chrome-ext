@@ -9,9 +9,8 @@ export class GtfsRealtimeService {
 
   async getArrivalsForStop(stopId: string): Promise<ArrivalInfo[]> {
     const feed = await fetchAndDecodeFeed(TRIP_UPDATES_URL);
+    const minTimeMs = Date.now() - 60_000;
     const arrivals: ArrivalInfo[] = [];
-    const now = Date.now();
-    const oneMinuteAgo = now - 60_000;
 
     for (const entity of feed.entity ?? []) {
       const tripUpdate = entity.tripUpdate;
@@ -24,7 +23,7 @@ export class GtfsRealtimeService {
         if (stopTimeEvent?.time === undefined) continue;
 
         const arrivalTime = new Date(stopTimeEvent.time * 1000);
-        if (arrivalTime.getTime() <= oneMinuteAgo) continue;
+        if (arrivalTime.getTime() <= minTimeMs) continue;
 
         const tripId = tripUpdate.trip.tripId ?? "";
         const { routeLabel, headsign } = this.staticData.describeTrip(tripId, tripUpdate.trip.routeId ?? "");

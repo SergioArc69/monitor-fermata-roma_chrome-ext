@@ -151,7 +151,38 @@ export class GtfsStaticData {
     if (tripIdx < 0 || stopIdx < 0 || arrivalIdx < 0) return [];
 
     const now = new Date();
-    const todayKey = now.getFullYear() * 10000 + (now.getMonth() + 1) * 100 + now.getDate();
+    const startOfToday = new Date(now);
+    startOfToday.setHours(0, 0, 0, 0);
+
+    let results = this.collectScheduledArrivals(
+      lines, tripIdx, stopIdx, arrivalIdx, stopId, dateKeyFor(startOfToday), startOfToday, now.getTime() - 60_000
+    );
+
+    if (results.length < maxResults) {
+      // Service for today may have ended (e.g. monitoring a stop late at night, after the last
+      // run): pad with tomorrow's first runs instead of leaving the line empty.
+      const startOfTomorrow = new Date(startOfToday);
+      startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+      const tomorrowResults = this.collectScheduledArrivals(
+        lines, tripIdx, stopIdx, arrivalIdx, stopId, dateKeyFor(startOfTomorrow), startOfTomorrow, -Infinity
+      );
+      results = results.concat(tomorrowResults);
+    }
+
+    results.sort((a, b) => a.arrivalTime.getTime() - b.arrivalTime.getTime());
+    return results.slice(0, maxResults);
+  }
+
+  private collectScheduledArrivals(
+    lines: string[],
+    tripIdx: number,
+    stopIdx: number,
+    arrivalIdx: number,
+    stopId: string,
+    dateKey: number,
+    startOfDay: Date,
+    minArrivalTimeMs: number
+  ): ScheduledArrival[] {
     const results: ScheduledArrival[] = [];
 
     for (let i = 1; i < lines.length; i++) {
@@ -164,22 +195,19 @@ export class GtfsStaticData {
 
       const tripId = fields[tripIdx]!;
       const trip = this.trips.get(tripId);
-      if (!trip || !this.isServiceActiveOn(trip.serviceId, todayKey)) continue;
+      if (!trip || !this.isServiceActiveOn(trip.serviceId, dateKey)) continue;
 
       const timeOfDay = parseGtfsTimeOfDay(fields[arrivalIdx] ?? "");
       if (timeOfDay === null) continue;
 
-      const startOfDay = new Date(now);
-      startOfDay.setHours(0, 0, 0, 0);
       const arrivalTime = new Date(startOfDay.getTime() + timeOfDay); // GTFS allows hours >= 24 for past-midnight trips
-      if (arrivalTime.getTime() < now.getTime() - 60_000) continue;
+      if (arrivalTime.getTime() < minArrivalTimeMs) continue;
 
       const { routeLabel, headsign } = this.describeTrip(tripId, trip.routeId);
       results.push({ tripId, routeLabel, headsign, arrivalTime });
     }
 
-    results.sort((a, b) => a.arrivalTime.getTime() - b.arrivalTime.getTime());
-    return results.slice(0, maxResults);
+    return results;
   }
 
   /**
@@ -398,6 +426,11 @@ function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number)
 
 function degreesToRadians(degrees: number): number {
   return (degrees * Math.PI) / 180;
+}
+
+/** yyyymmdd, matching the format used by calendar_dates.txt's `date` column. */
+function dateKeyFor(date: Date): number {
+  return date.getFullYear() * 10000 + (date.getMonth() + 1) * 100 + date.getDate();
 }
 
 /** Parses a GTFS "HH:MM:SS" time (hours may be >= 24 for past-midnight trips) into total milliseconds since midnight. */
