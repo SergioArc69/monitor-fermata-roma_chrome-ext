@@ -21,6 +21,7 @@ export class VehiclePositionsService {
         lat: vehicle.position.latitude ?? 0,
         lon: vehicle.position.longitude ?? 0,
         isStopped: vehicle.currentStatus === "STOPPED_AT",
+        currentStopId: vehicle.stopId ?? "",
       });
     }
 

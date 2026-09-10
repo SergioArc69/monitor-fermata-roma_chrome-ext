@@ -8,7 +8,7 @@ import type { ArrivalInfo } from "../shared/models.js";
 import { minutesLabel } from "../shared/arrivalFormatting.js";
 
 const MAX_VISIBLE_STOPS = 150;
-const BUS_REFRESH_INTERVAL_MS = 15_000;
+const BUS_REFRESH_INTERVAL_MS = 20_000;
 const ROME_FALLBACK = { lat: 41.9028, lon: 12.4964 };
 const MAX_DISTANCE_FROM_ROME_KM = 50;
 
@@ -30,6 +30,7 @@ const stopMarkers = new Map<string, L.Marker>();
 const busMarkers = new Map<string, L.Marker>();
 let viewportDebounceTimer: number | undefined;
 let busRefreshTimer: number | undefined;
+let busRefreshInFlight = false;
 let monitoredStopId: string | null = null;
 // The upstream GTFS-RT feed drops a stop's stop_time_update entry almost as soon as the bus passes
 // it — it does NOT keep reporting it for minutes afterwards. So to keep recently-passed buses on
@@ -60,6 +61,9 @@ async function init(): Promise<void> {
 async function enterMonitorMode(stopId: string): Promise<void> {
   monitoredStopId = stopId;
   recentArrivalsByTripId = new Map();
+  // Any refresh still in flight is now for the previous session; its post-await guards make it a
+  // no-op, so don't let its flag block this session's first refresh.
+  busRefreshInFlight = false;
   window.clearInterval(busRefreshTimer);
   map?.off("moveend", onViewportMoveEnd);
 
@@ -70,7 +74,7 @@ async function enterMonitorMode(stopId: string): Promise<void> {
     return;
   }
 
-  instructionEl.textContent = "Fermata monitorata, con la posizione dei bus in transito (aggiornata ogni 15 secondi).";
+  instructionEl.textContent = "Fermata monitorata, con la posizione dei bus in transito (aggiornata ogni 20 secondi).";
   stopMonitoringButton.style.display = "block";
   mapEl.classList.add("with-bus-bar");
   busStatusBarEl.style.display = "flex";
@@ -161,14 +165,27 @@ async function selectStop(stopId: string): Promise<void> {
 
 /** Buses that already passed the stop stay visible on the map, in blue, for this long afterwards. */
 const RECENTLY_PASSED_LOOKBACK_MINUTES = 10;
+/**
+ * A bus is only treated as "already passed" once it has BOTH dropped out of the TripUpdates feed
+ * for this stop (producers remove a stop the moment the vehicle passes it) AND its last predicted
+ * arrival is comfortably in the past. Time alone isn't enough: a late bus that's still approaching
+ * keeps a stale-looking prediction while its real position shows it hasn't arrived.
+ */
+const PASSED_CONFIRM_GRACE_MS = 90_000;
 
 async function refreshBusPositions(stopId: string): Promise<void> {
+  // A slow previous refresh still resolving its fetches would otherwise interleave with this one and
+  // leak duplicate markers (it clears early, then this run adds before it finishes adding).
+  if (busRefreshInFlight) return;
+  busRefreshInFlight = true;
   try {
     // Fetch only the "fresh" (not yet passed, modulo ~1 min feed lag) sightings for this tick, then
     // merge into our own short-term memory — see recentArrivalsByTripId's comment for why.
     const freshArrivals = await realtimeService.getArrivalsForStop(stopId);
     if (monitoredStopId !== stopId) return;
 
+    // Trips still listed for this stop haven't passed it yet, however late they're running.
+    const stillApproaching = new Set(freshArrivals.map((a) => a.tripId));
     for (const arrival of freshArrivals) {
       recentArrivalsByTripId.set(arrival.tripId, arrival);
     }
@@ -177,9 +194,8 @@ async function refreshBusPositions(stopId: string): Promise<void> {
       if (arrival.arrivalTime.getTime() < cutoff) recentArrivalsByTripId.delete(tripId);
     }
 
-    clearBusMarkers();
-
     if (recentArrivalsByTripId.size === 0) {
+      clearBusMarkers();
       busStatusBarEl.innerHTML = "";
       return;
     }
@@ -188,6 +204,20 @@ async function refreshBusPositions(stopId: string): Promise<void> {
     const positions = await vehiclePositions.getPositionsForTrips(new Set(arrivalByTripId.keys()));
     if (monitoredStopId !== stopId) return;
 
+    // For buses currently stopped, look up the realtime predicted departure from the stop they're
+    // sitting at, so the chip can show when they're expected to move on.
+    const stoppedTripStops = new Map<string, string>();
+    for (const position of positions) {
+      if (position.isStopped && position.currentStopId) {
+        stoppedTripStops.set(position.tripId, position.currentStopId);
+      }
+    }
+    const predictedDepartures = await realtimeService.getPredictedDeparturesAtStops(stoppedTripStops);
+    if (monitoredStopId !== stopId) return;
+
+    // Replace this tick's snapshot in one go, only after every fetch has resolved — clearing earlier
+    // would leave the map empty during the fetch window.
+    clearBusMarkers();
     const now = Date.now();
     busStatusBarEl.innerHTML = "";
     for (const position of positions) {
@@ -195,11 +225,19 @@ async function refreshBusPositions(stopId: string): Promise<void> {
       const arrival = arrivalByTripId.get(position.tripId);
       // Prefix with the route so it's clear which line each bus belongs to at stops served by several.
       const label = arrival ? `[${arrival.routeLabel}] ${vehicleLabel}` : vehicleLabel;
-      const hasPassed = arrival !== undefined && arrival.arrivalTime.getTime() < now;
-      const etaLabel = arrival ? buildEtaLabel(arrival, hasPassed) : "";
-      const statusLabel = hasPassed ? "già passato" : position.isStopped ? "fermo" : "in movimento";
+      const hasPassed =
+        arrival !== undefined &&
+        !stillApproaching.has(position.tripId) &&
+        arrival.arrivalTime.getTime() < now - PASSED_CONFIRM_GRACE_MS;
+      const departureTime = position.isStopped && !hasPassed ? predictedDepartures.get(position.tripId) : undefined;
 
-      addBusMarker(position.tripId, position.lat, position.lon, label, position.isStopped, etaLabel, hasPassed);
+      const statusClass = hasPassed ? "passed" : position.isStopped ? "stopped" : "moving";
+      let statusLabel = hasPassed ? "già passato" : position.isStopped ? "fermo" : "in movimento";
+      if (departureTime) statusLabel = `fermo (${departureTime.toLocaleTimeString("it-IT")} |→)`;
+
+      const etaLabel = arrival ? buildEtaLabel(arrival, hasPassed, departureTime !== undefined) : "";
+
+      addBusMarker(position.tripId, position.lat, position.lon, label, statusClass, statusLabel, etaLabel);
 
       const chip = document.createElement("span");
       chip.className = hasPassed ? "bus-chip passed" : "bus-chip";
@@ -208,6 +246,8 @@ async function refreshBusPositions(stopId: string): Promise<void> {
     }
   } catch (error) {
     console.error("[map] errore durante l'aggiornamento delle posizioni bus:", error);
+  } finally {
+    busRefreshInFlight = false;
   }
 }
 
@@ -238,7 +278,7 @@ async function stopMonitoringFromMap(): Promise<void> {
   }
 }
 
-function buildEtaLabel(arrival: ArrivalInfo, hasPassed: boolean): string {
+function buildEtaLabel(arrival: ArrivalInfo, hasPassed: boolean, markArrival = false): string {
   if (hasPassed) {
     const minutesAgo = Math.round((Date.now() - arrival.arrivalTime.getTime()) / 60_000);
     const label = minutesAgo <= 0 ? "appena passato" : minutesAgo === 1 ? "passato 1 min fa" : `passato ${minutesAgo} min fa`;
@@ -246,7 +286,9 @@ function buildEtaLabel(arrival: ArrivalInfo, hasPassed: boolean): string {
   }
   const label = minutesLabel(arrival);
   const prefix = label === "in arrivo" ? "" : "tra ";
-  return `${prefix}${label} (${arrival.arrivalTime.toLocaleTimeString("it-IT")})`;
+  // When a departure time (|→) is also shown, mark the arrival time with →| to tell the two apart.
+  const arrivalMark = markArrival ? "→| " : "";
+  return `${prefix}${label} (${arrivalMark}${arrival.arrivalTime.toLocaleTimeString("it-IT")})`;
 }
 
 function buildStopTooltip(stopId: string, stopName: string): string {
@@ -279,13 +321,15 @@ function addBusMarker(
   lat: number,
   lon: number,
   label: string,
-  isStopped: boolean,
-  etaLabel: string,
-  hasPassed: boolean
+  statusClass: string,
+  statusLabel: string,
+  etaLabel: string
 ): void {
-  const statusClass = hasPassed ? "passed" : isStopped ? "stopped" : "moving";
+  const existing = busMarkers.get(tripId);
+  if (existing) map.removeLayer(existing); // never leave the previous position's marker behind
+
   const icon = L.divIcon({ className: `bus-icon ${statusClass}`, html: "🚌", iconSize: [24, 24] });
-  let popup = `${escapeHtml(label)} — ${hasPassed ? "già passato" : isStopped ? "fermo" : "in movimento"}`;
+  let popup = `${escapeHtml(label)} — ${escapeHtml(statusLabel)}`;
   if (etaLabel) popup += `<br>${escapeHtml(etaLabel)}`;
   const marker = L.marker([lat, lon], { icon }).addTo(map).bindPopup(popup);
   busMarkers.set(tripId, marker);

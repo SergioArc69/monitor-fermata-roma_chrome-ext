@@ -51,4 +51,6 @@ export interface VehiclePositionInfo {
   lat: number;
   lon: number;
   isStopped: boolean;
+  /** Stop the vehicle is currently at/approaching (GTFS-RT `stop_id`), "" if not reported. */
+  currentStopId: string;
 }

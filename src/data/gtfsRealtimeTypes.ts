@@ -37,6 +37,7 @@ export interface RtVehiclePosition {
   vehicle?: RtVehicleDescriptor;
   position?: RtPosition;
   currentStatus?: "INCOMING_AT" | "STOPPED_AT" | "IN_TRANSIT_TO";
+  stopId?: string;
 }
 
 export interface RtFeedEntity {
