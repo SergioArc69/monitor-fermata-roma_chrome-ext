@@ -316,6 +316,16 @@ function createMap(lat: number, lon: number, zoom: number): void {
     attributionControl: { compact: true, customAttribution: "© OpenStreetMap contributors · © OpenFreeMap" },
   });
   map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
+
+  // The "bright" style references a few POI icons (gate, office, swimming_pool, ...) that aren't
+  // in the sprite sheet it's paired with — cosmetic gaps upstream. setMissingStyleImageResolver is
+  // awaited *before* MapLibre treats the image as missing, so resolving it here (unlike handling
+  // the 'styleimagemissing' event, which fires only after the "could not be loaded" warning is
+  // already logged) avoids the console warning entirely, not just the visual gap.
+  map.setMissingStyleImageResolver((id) => {
+    if (map.hasImage(id)) return;
+    map.addImage(id, { width: 1, height: 1, data: new Uint8Array([0, 0, 0, 0]) });
+  });
 }
 
 function addStopMarker(stopId: string, lat: number, lon: number, tooltipHtml: string, selectable: boolean): void {
