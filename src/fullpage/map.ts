@@ -1,11 +1,17 @@
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
+import * as maplibregl from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
 import { GtfsStaticData } from "../data/gtfsStaticData.js";
 import { GtfsRealtimeService } from "../data/gtfsRealtimeService.js";
 import { VehiclePositionsService } from "../data/vehiclePositionsService.js";
 import { getMonitoredStopId, startMonitoringStop, stopMonitoringStop } from "../shared/monitoringController.js";
 import type { ArrivalInfo } from "../shared/models.js";
 import { minutesLabel } from "../shared/arrivalFormatting.js";
+
+// MapLibre normally resolves its worker script relative to its own bundle's import.meta.url, but
+// that auto-detection doesn't work inside a chrome-extension:// page — it ends up requesting the
+// current document instead of the worker file. Point it explicitly at the copy build.mjs places
+// next to this bundle.
+maplibregl.setWorkerUrl(chrome.runtime.getURL("dist/maplibre-gl-worker.mjs"));
 
 const MAX_VISIBLE_STOPS = 150;
 const BUS_REFRESH_INTERVAL_MS = 20_000;
@@ -21,13 +27,10 @@ const staticData = new GtfsStaticData();
 const realtimeService = new GtfsRealtimeService(staticData);
 const vehiclePositions = new VehiclePositionsService();
 
-const stopIcon = L.divIcon({ className: "stop-icon", html: "📍", iconSize: [22, 22] });
-const monitoredStopIcon = L.divIcon({ className: "stop-icon monitored", html: "🚏", iconSize: [24, 24] });
-
-let map: L.Map;
-let meMarker: L.CircleMarker | null = null;
-const stopMarkers = new Map<string, L.Marker>();
-const busMarkers = new Map<string, L.Marker>();
+let map: maplibregl.Map;
+let meMarker: maplibregl.Marker | null = null;
+const stopMarkers = new Map<string, maplibregl.Marker>();
+const busMarkers = new Map<string, maplibregl.Marker>();
 let viewportDebounceTimer: number | undefined;
 let busRefreshTimer: number | undefined;
 let busRefreshInFlight = false;
@@ -80,7 +83,7 @@ async function enterMonitorMode(stopId: string): Promise<void> {
   busStatusBarEl.style.display = "flex";
 
   if (!map) createMap(location.lat, location.lon, 16);
-  else map.setView([location.lat, location.lon], 16);
+  else map.jumpTo({ center: [location.lon, location.lat], zoom: 16 });
 
   const stopName = staticData.tryGetStopName(stopId) ?? "";
   addStopMarker(stopId, location.lat, location.lon, buildStopTooltip(stopId, stopName), false);
@@ -113,7 +116,7 @@ async function enterBrowseMode(): Promise<void> {
     : "Posizione non disponibile: mostro le fermate del centro di Roma. Clicca su una fermata per monitorarla, oppure sposta o zooma la mappa per cercarne altre.";
 
   if (!map) createMap(lat, lon, 16);
-  else map.setView([lat, lon], 16);
+  else map.jumpTo({ center: [lon, lat], zoom: 16 });
   addMeMarker(lat, lon);
 
   map.off("moveend", onViewportMoveEnd);
@@ -157,7 +160,7 @@ async function selectStop(stopId: string): Promise<void> {
 
   clearStopMarkers();
   if (meMarker) {
-    map.removeLayer(meMarker);
+    meMarker.remove();
     meMarker = null;
   }
   await enterMonitorMode(stopId);
@@ -299,21 +302,35 @@ function buildStopTooltip(stopId: string, stopName: string): string {
 }
 
 function createMap(lat: number, lon: number, zoom: number): void {
-  map = L.map(mapEl).setView([lat, lon], zoom);
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19,
-    attribution: "&copy; OpenStreetMap contributors",
-  }).addTo(map);
+  // tile.openstreetmap.org is a volunteer-run server that blocks third-party app traffic (missing
+  // browser-extension/WebView referrers read as "bulk" usage under its tile usage policy — see
+  // https://operations.osmfoundation.org/policies/tiles/). Wikimedia's raster tiles turned out to
+  // be rate-limited in practice, and CARTO's free basemaps now require an API key — OpenFreeMap is
+  // free, unlimited, and needs no key, but only serves vector tiles, hence MapLibre GL JS instead
+  // of Leaflet.
+  map = new maplibregl.Map({
+    container: mapEl,
+    style: "https://tiles.openfreemap.org/styles/bright",
+    center: [lon, lat],
+    zoom,
+    attributionControl: { compact: true, customAttribution: "© OpenStreetMap contributors · © OpenFreeMap" },
+  });
+  map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
 }
 
 function addStopMarker(stopId: string, lat: number, lon: number, tooltipHtml: string, selectable: boolean): void {
-  const marker = L.marker([lat, lon], { icon: selectable ? stopIcon : monitoredStopIcon })
-    .addTo(map)
-    .bindTooltip(tooltipHtml, { direction: "top", offset: [0, -14] });
+  const el = document.createElement("div");
+  el.className = "stop-marker" + (selectable ? " selectable" : " monitored");
+  el.textContent = selectable ? "📍" : "🚏";
+  // Leaflet's bindTooltip showed the label on hover (not click); replicate that with a popup
+  // toggled on mouseenter/mouseleave instead of MapLibre's default click-to-open.
+  const tooltip = new maplibregl.Popup({ offset: 14, closeButton: false, closeOnClick: false }).setHTML(tooltipHtml);
+  el.addEventListener("mouseenter", () => tooltip.setLngLat([lon, lat]).addTo(map));
+  el.addEventListener("mouseleave", () => tooltip.remove());
   if (selectable) {
-    marker.on("click", () => void selectStop(stopId));
+    el.addEventListener("click", () => void selectStop(stopId));
   }
-  stopMarkers.set(stopId, marker);
+  stopMarkers.set(stopId, new maplibregl.Marker({ element: el }).setLngLat([lon, lat]).addTo(map));
 }
 
 function addBusMarker(
@@ -325,30 +342,32 @@ function addBusMarker(
   statusLabel: string,
   etaLabel: string
 ): void {
-  const existing = busMarkers.get(tripId);
-  if (existing) map.removeLayer(existing); // never leave the previous position's marker behind
+  busMarkers.get(tripId)?.remove(); // never leave the previous position's marker behind
 
-  const icon = L.divIcon({ className: `bus-icon ${statusClass}`, html: "🚌", iconSize: [24, 24] });
-  let popup = `${escapeHtml(label)} — ${escapeHtml(statusLabel)}`;
-  if (etaLabel) popup += `<br>${escapeHtml(etaLabel)}`;
-  const marker = L.marker([lat, lon], { icon }).addTo(map).bindPopup(popup);
-  busMarkers.set(tripId, marker);
+  const el = document.createElement("div");
+  el.className = `bus-icon ${statusClass}`;
+  el.textContent = "🚌";
+  let popupHtml = `${escapeHtml(label)} — ${escapeHtml(statusLabel)}`;
+  if (etaLabel) popupHtml += `<br>${escapeHtml(etaLabel)}`;
+  const popup = new maplibregl.Popup({ offset: 12 }).setHTML(popupHtml);
+  busMarkers.set(tripId, new maplibregl.Marker({ element: el }).setLngLat([lon, lat]).setPopup(popup).addTo(map));
 }
 
 function addMeMarker(lat: number, lon: number): void {
-  if (meMarker) map.removeLayer(meMarker);
-  meMarker = L.circleMarker([lat, lon], { radius: 8, color: "#1a73e8", fillColor: "#1a73e8", fillOpacity: 0.9 })
-    .addTo(map)
-    .bindPopup("La tua posizione");
+  meMarker?.remove();
+  const el = document.createElement("div");
+  el.className = "me-marker";
+  const popup = new maplibregl.Popup({ offset: 10 }).setHTML("La tua posizione");
+  meMarker = new maplibregl.Marker({ element: el }).setLngLat([lon, lat]).setPopup(popup).addTo(map);
 }
 
 function clearStopMarkers(): void {
-  for (const marker of stopMarkers.values()) map.removeLayer(marker);
+  for (const marker of stopMarkers.values()) marker.remove();
   stopMarkers.clear();
 }
 
 function clearBusMarkers(): void {
-  for (const marker of busMarkers.values()) map.removeLayer(marker);
+  for (const marker of busMarkers.values()) marker.remove();
   busMarkers.clear();
 }
 

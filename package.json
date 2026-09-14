@@ -1,6 +1,6 @@
 {
   "name": "monitor-fermata-atac-roma-extension",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "private": true,
   "description": "Monitor Fermata ATAC Roma - estensione Chrome (Manifest V3)",
   "type": "module",
@@ -12,14 +12,13 @@
   },
   "devDependencies": {
     "@types/chrome": "^0.0.280",
-    "@types/leaflet": "^1.9.12",
     "esbuild": "^0.24.0",
     "protobufjs-cli": "^2.6.2",
     "typescript": "^5.6.0"
   },
   "dependencies": {
     "fflate": "^0.8.2",
-    "leaflet": "^1.9.4",
+    "maplibre-gl": "^6.9.0",
     "protobufjs": "^8.7.2"
   }
 }

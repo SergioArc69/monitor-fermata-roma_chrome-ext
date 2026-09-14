@@ -11,15 +11,13 @@ const commonOptions = {
   target: "chrome120",
   sourcemap: true,
   logLevel: "info",
-  // leaflet.css references a few control/marker icons via url(); we don't use Leaflet's default
-  // icon (every marker gets an explicit divIcon), but esbuild still needs a loader to resolve them.
   loader: { ".png": "dataurl" },
 };
 
 const buildOptions = [
   { ...commonOptions, entryPoints: ["src/background/index.ts"], outfile: "dist/background.js" },
   { ...commonOptions, entryPoints: ["src/popup/popup.ts"], outfile: "dist/popup.js" },
-  // Bundles leaflet/dist/leaflet.css imported from map.ts into a sibling dist/map.css automatically.
+  // Bundles maplibre-gl/dist/maplibre-gl.css imported from map.ts into a sibling dist/map.css automatically.
   { ...commonOptions, entryPoints: ["src/fullpage/map.ts"], outfile: "dist/map.js" },
   { ...commonOptions, entryPoints: ["src/about/about.ts"], outfile: "dist/about.js" },
 ];
@@ -29,6 +27,12 @@ function copyStaticAssets() {
   cpSync("src/fullpage/map.html", "dist/map.html");
   cpSync("src/about/about.html", "dist/about.html");
   cpSync("src/privacy/privacy.html", "dist/privacy.html");
+  // MapLibre GL JS resolves its worker at runtime relative to the main bundle's own URL
+  // (import.meta.url), i.e. next to dist/map.js — esbuild doesn't know to bundle/copy it itself.
+  // The worker file in turn imports a second chunk (code shared with the main thread) via a plain
+  // relative import, so that has to be copied alongside it too.
+  cpSync("node_modules/maplibre-gl/dist/maplibre-gl-worker.mjs", "dist/maplibre-gl-worker.mjs");
+  cpSync("node_modules/maplibre-gl/dist/maplibre-gl-shared.mjs", "dist/maplibre-gl-shared.mjs");
 }
 
 if (watch) {

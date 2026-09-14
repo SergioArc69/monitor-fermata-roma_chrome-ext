@@ -43,8 +43,9 @@ dall'utente, con mappa e notifiche di avviso, usando i dati aperti GTFS/GTFS-RT 
 No. Tutto il codice JavaScript eseguito dall'estensione è incluso nel pacchetto caricato (bundle
 generato in fase di build) e nessuno script esterno viene caricato o eseguito a runtime — la
 Content Security Policy dell'estensione (`script-src 'self'`) lo impedisce esplicitamente.
-L'estensione scarica da romamobilita.it solo dati (orari GTFS e aggiornamenti GTFS-RT in formato
-protobuf/JSON), non codice eseguibile.
+L'estensione scarica da romamobilita.it e da tiles.openfreemap.org solo dati (orari GTFS e
+aggiornamenti GTFS-RT in formato protobuf/JSON, oppure stile/tile/font della mappa), non codice
+eseguibile.
 
 ## Giustificazione permessi (richiesta in fase di submission)
 - storage: salvare fermata monitorata, impostazioni notifiche/filtro linee e cache dati GTFS, solo
@@ -54,3 +55,5 @@ protobuf/JSON), non codice eseguibile.
 - notifications: mostrare la notifica di bus in arrivo
 - host permission romamobilita.it: scaricare i dati aperti GTFS/GTFS-RT (orari e posizioni bus)
   necessari al funzionamento dell'estensione
+- host permission tiles.openfreemap.org: scaricare stile, tile vettoriali, sprite e font della
+  mappa (servizio gratuito OpenFreeMap, nessuna chiave API)

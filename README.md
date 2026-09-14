@@ -13,14 +13,14 @@ orari di arrivo dei bus a Roma in tempo reale, usando i dati aperti GTFS / GTFS-
 - Arrivi in tempo reale (GTFS-RT), con fallback sull'orario schedulato quando i dati realtime non sono disponibili
 - Notifiche configurabili (soglia minuti, fascia oraria)
 - Filtro per linea
-- Mappa interattiva (Leaflet + OpenStreetMap) con posizione dei bus in tempo reale
+- Mappa interattiva (MapLibre GL JS + OpenFreeMap) con posizione dei bus in tempo reale
 - Aggiornamento automatico e periodico dei dati statici GTFS, nessun pulsante manuale
 
 
 ## Dati e licenze
 
 - Orari e posizioni bus: [Roma Mobilità](https://romamobilita.it/) (GTFS / GTFS-RT, dati aperti)
-- Mappe: © collaboratori di [OpenStreetMap](https://www.openstreetmap.org/copyright)
+- Mappe: [OpenFreeMap](https://openfreemap.org/), con dati cartografici © collaboratori di [OpenStreetMap](https://www.openstreetmap.org/copyright)
 - Codice: rilasciato nel pubblico dominio ([Unlicense](LICENSE))
 
 
