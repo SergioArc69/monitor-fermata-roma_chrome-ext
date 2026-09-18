@@ -39,12 +39,38 @@
       #stopMonitoringButton:hover {
         background: #fce8e6;
       }
+      #lineFilterBar {
+        height: 33px;
+        box-sizing: border-box;
+        padding: 6px 14px;
+        background: #f9f9f9;
+        border-bottom: 1px solid #ddd;
+        display: none;
+        align-items: center;
+        gap: 10px;
+        overflow-x: auto;
+        white-space: nowrap;
+      }
+      #lineFilterBar label {
+        white-space: nowrap;
+      }
+      #lineFilterToggle {
+        flex: none;
+        font-weight: 600;
+      }
+      #lineFilterList {
+        display: flex;
+        gap: 8px;
+      }
       #map {
         position: absolute;
         top: 37px;
         bottom: 0;
         left: 0;
         right: 0;
+      }
+      #map.with-line-filter {
+        top: 70px;
       }
       #map.with-bus-bar {
         bottom: 56px;
@@ -114,6 +140,10 @@
     <div id="instructionBar">
       <div id="instruction">Caricamento mappa...</div>
       <button id="stopMonitoringButton" type="button">Ferma monitoraggio</button>
+    </div>
+    <div id="lineFilterBar">
+      <label id="lineFilterToggle"><input type="checkbox" id="lineFilterEnabled" disabled /> Filtra per linea</label>
+      <div id="lineFilterList"></div>
     </div>
     <div id="map"></div>
     <div id="busStatusBar"></div>

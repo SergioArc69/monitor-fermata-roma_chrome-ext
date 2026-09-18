@@ -47,7 +47,7 @@ async function init(): Promise<void> {
 
   await loadNotifySettingsIntoUi();
   lineFilterState = await getLineFilter();
-  lineFilterEnabledInput.checked = lineFilterState.enabled;
+  updateLineFilterEnabledState();
 
   statusEl.textContent = "Caricamento dati GTFS statici...";
   try {
@@ -302,11 +302,24 @@ function renderLineFilterList(): void {
   }
 }
 
+/**
+ * The filter only ever does anything with at least one line selected, so keep the master checkbox
+ * disabled (and forcibly unchecked) whenever the selection is empty, rather than letting it sit
+ * checked-but-inert.
+ */
+function updateLineFilterEnabledState(): void {
+  const hasSelection = lineFilterState.selectedLines.length > 0;
+  lineFilterEnabledInput.disabled = !hasSelection;
+  if (!hasSelection) lineFilterState = { ...lineFilterState, enabled: false };
+  lineFilterEnabledInput.checked = lineFilterState.enabled;
+}
+
 async function onLineFilterSelectionChanged(line: string, checked: boolean): Promise<void> {
   const selected = new Set(lineFilterState.selectedLines);
   if (checked) selected.add(line);
   else selected.delete(line);
   lineFilterState = { ...lineFilterState, selectedLines: [...selected] };
+  updateLineFilterEnabledState();
   await setLineFilter(lineFilterState);
   applyFilterAndDisplay();
 }
@@ -368,18 +381,27 @@ document.addEventListener("click", (event) => {
 
 monitorButton.addEventListener("click", () => void startMonitoring());
 stopButton.addEventListener("click", () => void stopMonitoring());
-mapButton.addEventListener("click", () => void openOrFocusTab("mapTabId", "dist/map.html"));
+mapButton.addEventListener("click", () => {
+  const stopId = stopInput.value.trim();
+  const pagePath = stopId ? `dist/map.html?centerStop=${encodeURIComponent(stopId)}` : "dist/map.html";
+  void openOrFocusTab("mapTabId", pagePath);
+});
 aboutButton.addEventListener("click", () => void openOrFocusTab("aboutTabId", "dist/about.html"));
 
-/** Reuses an already-open tab for a given extension page instead of stacking up duplicates. */
+/**
+ * Reuses an already-open tab for a given extension page instead of stacking up duplicates. Also
+ * re-navigates it to pagePath even when reused, so e.g. a newly typed stop code (via the map's
+ * ?centerStop= param) still takes effect on a map tab that was already open.
+ */
 async function openOrFocusTab(sessionKey: string, pagePath: string): Promise<void> {
   const stored = await chrome.storage.session.get(sessionKey);
   const tabId = stored[sessionKey] as number | undefined;
+  const url = chrome.runtime.getURL(pagePath);
 
   if (tabId !== undefined) {
     try {
       const tab = await chrome.tabs.get(tabId);
-      await chrome.tabs.update(tabId, { active: true });
+      await chrome.tabs.update(tabId, { active: true, url });
       await chrome.windows.update(tab.windowId, { focused: true });
       return;
     } catch {
@@ -387,7 +409,7 @@ async function openOrFocusTab(sessionKey: string, pagePath: string): Promise<voi
     }
   }
 
-  const created = await chrome.tabs.create({ url: chrome.runtime.getURL(pagePath) });
+  const created = await chrome.tabs.create({ url });
   if (created.id !== undefined) await chrome.storage.session.set({ [sessionKey]: created.id });
 }
 

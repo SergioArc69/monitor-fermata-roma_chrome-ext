@@ -6,6 +6,8 @@ import { VehiclePositionsService } from "../data/vehiclePositionsService.js";
 import { getMonitoredStopId, startMonitoringStop, stopMonitoringStop } from "../shared/monitoringController.js";
 import type { ArrivalInfo } from "../shared/models.js";
 import { minutesLabel } from "../shared/arrivalFormatting.js";
+import { applyLineFilter, getLineFilter, setLineFilter, type LineFilterState } from "../shared/lineFilter.js";
+import { getCachedArrivals } from "../shared/arrivalsCache.js";
 
 // MapLibre normally resolves its worker script relative to its own bundle's import.meta.url, but
 // that auto-detection doesn't work inside a chrome-extension:// page — it ends up requesting the
@@ -22,6 +24,9 @@ const instructionEl = document.getElementById("instruction") as HTMLDivElement;
 const mapEl = document.getElementById("map") as HTMLDivElement;
 const busStatusBarEl = document.getElementById("busStatusBar") as HTMLDivElement;
 const stopMonitoringButton = document.getElementById("stopMonitoringButton") as HTMLButtonElement;
+const lineFilterBarEl = document.getElementById("lineFilterBar") as HTMLDivElement;
+const lineFilterEnabledInput = document.getElementById("lineFilterEnabled") as HTMLInputElement;
+const lineFilterListEl = document.getElementById("lineFilterList") as HTMLDivElement;
 
 const staticData = new GtfsStaticData();
 const realtimeService = new GtfsRealtimeService(staticData);
@@ -30,6 +35,12 @@ const vehiclePositions = new VehiclePositionsService();
 let map: maplibregl.Map;
 let meMarker: maplibregl.Marker | null = null;
 const stopMarkers = new Map<string, maplibregl.Marker>();
+// Stop tooltips are shown via a Popup added directly to the map (not marker.setPopup(), to get
+// hover instead of click-to-open), so removing the marker itself does not remove an open tooltip.
+// Track them here so clearStopMarkers can close any that are still open, otherwise one left open
+// while its marker is replaced (e.g. by a viewport refresh on moveend) never receives the
+// 'mouseleave' that would normally close it, and lingers on the map with no way to dismiss it.
+const stopTooltips = new Set<maplibregl.Popup>();
 const busMarkers = new Map<string, maplibregl.Marker>();
 let viewportDebounceTimer: number | undefined;
 let busRefreshTimer: number | undefined;
@@ -40,6 +51,12 @@ let monitoredStopId: string | null = null;
 // the map for a while, we have to remember their last-seen arrival ourselves, rather than expecting
 // the feed to still have it on a later poll. Reset whenever a (possibly different) stop is monitored.
 let recentArrivalsByTripId = new Map<string, ArrivalInfo>();
+// Same filter the popup and the notification logic apply to the arrivals list — shared via
+// chrome.storage.local (see shared/lineFilter.ts), kept live here via the storage.onChanged
+// listener below so editing it from either the popup or this map takes effect immediately in
+// both places.
+let lineFilterState: LineFilterState = { enabled: false, selectedLines: [] };
+const availableLines = new Set<string>();
 
 async function init(): Promise<void> {
   instructionEl.textContent = "Caricamento dati...";
@@ -57,7 +74,8 @@ async function init(): Promise<void> {
   if (storedMonitoredStopId) {
     await enterMonitorMode(storedMonitoredStopId);
   } else {
-    await enterBrowseMode();
+    const centerStopId = new URLSearchParams(window.location.search).get("centerStop");
+    await enterBrowseMode(centerStopId);
   }
 }
 
@@ -82,6 +100,17 @@ async function enterMonitorMode(stopId: string): Promise<void> {
   mapEl.classList.add("with-bus-bar");
   busStatusBarEl.style.display = "flex";
 
+  availableLines.clear();
+  mapEl.classList.add("with-line-filter");
+  lineFilterBarEl.style.display = "flex";
+  lineFilterState = await getLineFilter();
+  if (monitoredStopId !== stopId) return; // superseded while awaiting
+  updateLineFilterEnabledState();
+  const cachedArrivals = await getCachedArrivals(stopId);
+  if (monitoredStopId !== stopId) return;
+  if (cachedArrivals) for (const arrival of cachedArrivals) availableLines.add(arrival.routeLabel);
+  renderLineFilterList();
+
   if (!map) createMap(location.lat, location.lon, 16);
   else map.jumpTo({ center: [location.lon, location.lat], zoom: 16 });
 
@@ -94,7 +123,7 @@ async function enterMonitorMode(stopId: string): Promise<void> {
   }
 }
 
-async function enterBrowseMode(): Promise<void> {
+async function enterBrowseMode(centerStopId?: string | null): Promise<void> {
   monitoredStopId = null;
   window.clearInterval(busRefreshTimer);
   clearBusMarkers();
@@ -102,6 +131,25 @@ async function enterBrowseMode(): Promise<void> {
   busStatusBarEl.style.display = "none";
   mapEl.classList.remove("with-bus-bar");
   stopMonitoringButton.style.display = "none";
+  mapEl.classList.remove("with-line-filter");
+  lineFilterBarEl.style.display = "none";
+  availableLines.clear();
+
+  const centerStopLocation = centerStopId ? staticData.tryGetStopLocation(centerStopId) : null;
+
+  if (centerStopLocation) {
+    instructionEl.textContent =
+      "Fermate vicino al codice inserito: clicca su una fermata per monitorarla, oppure sposta o zooma la mappa per cercarne altre.";
+
+    if (!map) createMap(centerStopLocation.lat, centerStopLocation.lon, 16);
+    else map.jumpTo({ center: [centerStopLocation.lon, centerStopLocation.lat], zoom: 16 });
+
+    map.off("moveend", onViewportMoveEnd);
+    map.on("moveend", onViewportMoveEnd);
+
+    await refreshStopsInViewport();
+    return;
+  }
 
   const rawLocation = await getCurrentLocation();
   // Monitoring may have been restarted from the popup while geolocation was pending.
@@ -189,22 +237,34 @@ async function refreshBusPositions(stopId: string): Promise<void> {
 
     // Trips still listed for this stop haven't passed it yet, however late they're running.
     const stillApproaching = new Set(freshArrivals.map((a) => a.tripId));
+    let sawNewLine = false;
     for (const arrival of freshArrivals) {
       recentArrivalsByTripId.set(arrival.tripId, arrival);
+      if (!availableLines.has(arrival.routeLabel)) {
+        availableLines.add(arrival.routeLabel);
+        sawNewLine = true;
+      }
     }
+    if (sawNewLine) renderLineFilterList();
     const cutoff = Date.now() - RECENTLY_PASSED_LOOKBACK_MINUTES * 60_000;
     for (const [tripId, arrival] of recentArrivalsByTripId) {
       if (arrival.arrivalTime.getTime() < cutoff) recentArrivalsByTripId.delete(tripId);
     }
 
-    if (recentArrivalsByTripId.size === 0) {
+    // Apply the line filter to what's actually shown on the map, without discarding tracked
+    // arrivals for other lines from recentArrivalsByTripId — so toggling the filter takes effect
+    // immediately, instead of waiting for the recently-passed lookback window to expire.
+    const filteredTripIds = new Set(
+      applyLineFilter([...recentArrivalsByTripId.values()], lineFilterState).map((a) => a.tripId)
+    );
+    if (filteredTripIds.size === 0) {
       clearBusMarkers();
       busStatusBarEl.innerHTML = "";
       return;
     }
 
     const arrivalByTripId = recentArrivalsByTripId;
-    const positions = await vehiclePositions.getPositionsForTrips(new Set(arrivalByTripId.keys()));
+    const positions = await vehiclePositions.getPositionsForTrips(filteredTripIds);
     if (monitoredStopId !== stopId) return;
 
     // For buses currently stopped, look up the realtime predicted departure from the stop they're
@@ -254,17 +314,72 @@ async function refreshBusPositions(stopId: string): Promise<void> {
   }
 }
 
-// The popup and this page share the monitoring state. Keep an already-open map in sync when
-// monitoring is started or stopped elsewhere, rather than waiting for the page to be reopened.
+// The popup and this page share the monitoring state (and the line filter). Keep an already-open
+// map in sync when either is changed elsewhere, rather than waiting for the page to be reopened.
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName !== "local" || !changes["monitoredStopId"]) return;
+  if (areaName !== "local") return;
 
-  const stopId = changes["monitoredStopId"].newValue as string | undefined;
-  if (stopId) {
-    if (stopId !== monitoredStopId) void enterMonitorMode(stopId);
-  } else if (monitoredStopId) {
-    void enterBrowseMode();
+  if (changes["monitoredStopId"]) {
+    const stopId = changes["monitoredStopId"].newValue as string | undefined;
+    if (stopId) {
+      if (stopId !== monitoredStopId) void enterMonitorMode(stopId);
+    } else if (monitoredStopId) {
+      void enterBrowseMode();
+    }
   }
+
+  if (changes["lineFilter"] && monitoredStopId) {
+    lineFilterState = (changes["lineFilter"].newValue as LineFilterState | undefined) ?? {
+      enabled: false,
+      selectedLines: [],
+    };
+    updateLineFilterEnabledState();
+    renderLineFilterList();
+    void refreshBusPositions(monitoredStopId);
+  }
+});
+
+/**
+ * The filter only ever does anything with at least one line selected, so keep the master checkbox
+ * disabled (and forcibly unchecked) whenever the selection is empty, rather than letting it sit
+ * checked-but-inert.
+ */
+function updateLineFilterEnabledState(): void {
+  const hasSelection = lineFilterState.selectedLines.length > 0;
+  lineFilterEnabledInput.disabled = !hasSelection;
+  if (!hasSelection && lineFilterState.enabled) {
+    lineFilterState = { ...lineFilterState, enabled: false };
+    void setLineFilter(lineFilterState);
+  }
+  lineFilterEnabledInput.checked = lineFilterState.enabled;
+}
+
+function renderLineFilterList(): void {
+  lineFilterListEl.innerHTML = "";
+  const lines = [...availableLines].sort((a, b) => a.localeCompare(b, "it", { numeric: true }));
+
+  for (const line of lines) {
+    const label = document.createElement("label");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = lineFilterState.selectedLines.includes(line);
+    checkbox.addEventListener("change", () => void onLineFilterSelectionChanged(line, checkbox.checked));
+    label.append(checkbox, ` ${line}`);
+    lineFilterListEl.appendChild(label);
+  }
+}
+
+async function onLineFilterSelectionChanged(line: string, checked: boolean): Promise<void> {
+  // Just persist it: chrome.storage.onChanged fires in this same page too, and its handler above
+  // takes care of re-rendering the checkboxes and refreshing the bus markers.
+  const selected = new Set(lineFilterState.selectedLines);
+  if (checked) selected.add(line);
+  else selected.delete(line);
+  await setLineFilter({ ...lineFilterState, selectedLines: [...selected] });
+}
+
+lineFilterEnabledInput.addEventListener("change", () => {
+  void setLineFilter({ ...lineFilterState, enabled: lineFilterEnabledInput.checked });
 });
 
 stopMonitoringButton.addEventListener("click", () => void stopMonitoringFromMap());
@@ -310,15 +425,16 @@ function createMap(lat: number, lon: number, zoom: number): void {
   // of Leaflet.
   map = new maplibregl.Map({
     container: mapEl,
-    style: "https://tiles.openfreemap.org/styles/bright",
+    style: "https://tiles.openfreemap.org/styles/liberty",
     center: [lon, lat],
     zoom,
     attributionControl: { compact: true, customAttribution: "© OpenStreetMap contributors · © OpenFreeMap" },
   });
   map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
 
-  // The "bright" style references a few POI icons (gate, office, swimming_pool, ...) that aren't
-  // in the sprite sheet it's paired with — cosmetic gaps upstream. setMissingStyleImageResolver is
+  // The "liberty" style (like "bright" before it) references a few POI icons (gate, office,
+  // swimming_pool, ...) that aren't in the sprite sheet it's paired with — cosmetic gaps upstream.
+  // setMissingStyleImageResolver is
   // awaited *before* MapLibre treats the image as missing, so resolving it here (unlike handling
   // the 'styleimagemissing' event, which fires only after the "could not be loaded" warning is
   // already logged) avoids the console warning entirely, not just the visual gap.
@@ -335,6 +451,7 @@ function addStopMarker(stopId: string, lat: number, lon: number, tooltipHtml: st
   // Leaflet's bindTooltip showed the label on hover (not click); replicate that with a popup
   // toggled on mouseenter/mouseleave instead of MapLibre's default click-to-open.
   const tooltip = new maplibregl.Popup({ offset: 14, closeButton: false, closeOnClick: false }).setHTML(tooltipHtml);
+  stopTooltips.add(tooltip);
   el.addEventListener("mouseenter", () => tooltip.setLngLat([lon, lat]).addTo(map));
   el.addEventListener("mouseleave", () => tooltip.remove());
   if (selectable) {
@@ -374,6 +491,8 @@ function addMeMarker(lat: number, lon: number): void {
 function clearStopMarkers(): void {
   for (const marker of stopMarkers.values()) marker.remove();
   stopMarkers.clear();
+  for (const tooltip of stopTooltips) tooltip.remove(); // no-op for ones already closed
+  stopTooltips.clear();
 }
 
 function clearBusMarkers(): void {
