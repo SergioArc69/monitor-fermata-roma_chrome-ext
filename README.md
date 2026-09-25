@@ -9,11 +9,11 @@ orari di arrivo dei bus a Roma in tempo reale, usando i dati aperti GTFS / GTFS-
 
 ## Funzionalità
 
-- Ricerca fermata per codice, nome o linea, con suggerimenti e fermate recenti
+- Ricerca fermata per codice, nome o linea, con suggerimenti e fermate recenti, oltre alla ricerca sulla mappa, usando se disponibile anche la posizione corrente dell'utente
 - Arrivi in tempo reale (GTFS-RT), con fallback sull'orario schedulato quando i dati realtime non sono disponibili
 - Notifiche configurabili (soglia minuti, fascia oraria)
-- Filtro per linea
-- Mappa interattiva (MapLibre GL JS + OpenFreeMap) con posizione dei bus in tempo reale
+- Filtri per linea, sia in ricerca che in monitoraggio
+- Mappa interattiva (MapLibre GL JS + OpenFreeMap) con evidenziazione delle fermate e posizione dei bus in tempo reale
 - Aggiornamento automatico e periodico dei dati statici GTFS, nessun pulsante manuale
 
 
