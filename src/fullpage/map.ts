@@ -31,6 +31,8 @@ const lineFilterEnabledInput = document.getElementById("lineFilterEnabled") as H
 const lineFilterListEl = document.getElementById("lineFilterList") as HTMLDivElement;
 const showAllOnLineToggleEl = document.getElementById("showAllOnLineToggle") as HTMLLabelElement;
 const showAllOnLineEnabledInput = document.getElementById("showAllOnLineEnabled") as HTMLInputElement;
+const onlyVisibleLinesToggleEl = document.getElementById("onlyVisibleLinesToggle") as HTMLLabelElement;
+const onlyVisibleLinesEnabledInput = document.getElementById("onlyVisibleLinesEnabled") as HTMLInputElement;
 
 const staticData = new GtfsStaticData();
 const realtimeService = new GtfsRealtimeService(staticData);
@@ -64,6 +66,9 @@ const availableLines = new Set<string>();
 // Only meaningful (and only offered) with exactly one line checked in the filter: "all vehicles of
 // the line" needs one line to mean anything.
 let showAllVehiclesOnLine = false;
+// Browse mode only: narrows the filter list down to lines with a pin currently on screen, instead of
+// every line the static data knows about.
+let onlyVisibleLines = false;
 
 async function init(): Promise<void> {
   instructionEl.textContent = "Caricamento dati...";
@@ -73,9 +78,17 @@ async function init(): Promise<void> {
     instructionEl.textContent = `Impossibile caricare i dati GTFS statici: ${(error as Error).message}`;
     return;
   }
-  // Background, best-effort: populates tryGetStopModes for the tooltips below once the multi-second
-  // scan completes. Tooltips just show without the mode line until then.
-  void staticData.buildStopIndexes();
+  // Background, best-effort: populates tryGetStopModes for the tooltips, and the line filter's list
+  // of lines, once the multi-second scan completes. Both simply show nothing extra until then; in
+  // browse mode, refresh once it's done so the line list and non-bus colors aren't stuck empty.
+  void staticData.buildStopIndexes().then(() => {
+    if (monitoredStopId !== null) return; // switched to monitor mode meanwhile
+    refreshLineFilterOptions();
+    updateLineFilterEnabledState();
+    // The map may not exist yet (e.g. still waiting on a geolocation prompt): refreshStopsInViewport
+    // runs once it's created either way, at the end of enterBrowseMode.
+    if (map) void refreshStopsInViewport();
+  });
 
   const storedMonitoredStopId = await getMonitoredStopId();
   if (storedMonitoredStopId) {
@@ -110,6 +123,8 @@ async function enterMonitorMode(stopId: string): Promise<void> {
   availableLines.clear();
   showAllVehiclesOnLine = false;
   showAllOnLineEnabledInput.checked = false;
+  onlyVisibleLines = false;
+  onlyVisibleLinesEnabledInput.checked = false;
   mapEl.classList.add("with-line-filter");
   lineFilterBarEl.style.display = "flex";
   lineFilterState = await getLineFilter();
@@ -140,9 +155,14 @@ async function enterBrowseMode(centerStopId?: string | null): Promise<void> {
   busStatusBarEl.style.display = "none";
   mapEl.classList.remove("with-bus-bar");
   stopMonitoringButton.style.display = "none";
-  mapEl.classList.remove("with-line-filter");
-  lineFilterBarEl.style.display = "none";
-  availableLines.clear();
+
+  // Unlike monitor mode (where the list grows from the stop's own arrivals), browse mode shows
+  // every known line up front, so any line can be used to narrow down which stops are shown.
+  mapEl.classList.add("with-line-filter");
+  lineFilterBarEl.style.display = "flex";
+  lineFilterState = await getLineFilter();
+  refreshLineFilterOptions();
+  updateLineFilterEnabledState();
 
   const centerStopLocation = centerStopId ? staticData.tryGetStopLocation(centerStopId) : null;
 
@@ -191,16 +211,45 @@ async function refreshStopsInViewport(): Promise<void> {
   const bounds = map.getBounds();
   clearStopMarkers();
 
+  const lineFilter =
+    lineFilterState.enabled && lineFilterState.selectedLines.length > 0
+      ? new Set(lineFilterState.selectedLines)
+      : undefined;
   const stops = staticData.getStopsInBounds(
     bounds.getNorth(),
     bounds.getSouth(),
     bounds.getEast(),
     bounds.getWest(),
-    MAX_VISIBLE_STOPS
+    MAX_VISIBLE_STOPS,
+    lineFilter
   );
   for (const stop of stops) {
     addStopMarker(stop.stopId, stop.lat, stop.lon, buildStopTooltip(stop.stopId, stop.stopName), true);
   }
+  // "Solo linee visibili" tracks whatever's actually drawn, so it has to be redone on every viewport
+  // change too, not just when the checkbox itself is toggled.
+  if (onlyVisibleLines) refreshLineFilterOptions();
+}
+
+/**
+ * Browse mode's filter list: every known line by default (unlike monitor mode, which grows the list
+ * from the stop's own arrivals), or — with onlyVisibleLines on — only the lines served by a stop
+ * whose pin is currently drawn on the map, so the list stays short and relevant while browsing.
+ */
+function refreshLineFilterOptions(): void {
+  availableLines.clear();
+  const lines = onlyVisibleLines ? visibleLines() : staticData.getAllRouteLabels();
+  for (const label of lines) availableLines.add(label);
+  renderLineFilterList();
+}
+
+function visibleLines(): Set<string> {
+  const lines = new Set<string>();
+  for (const stopId of stopMarkers.keys()) {
+    const stopLines = staticData.tryGetStopLines(stopId);
+    if (stopLines) for (const line of stopLines) lines.add(line);
+  }
+  return lines;
 }
 
 async function selectStop(stopId: string): Promise<void> {
@@ -350,14 +399,15 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     }
   }
 
-  if (changes["lineFilter"] && monitoredStopId) {
+  if (changes["lineFilter"]) {
     lineFilterState = (changes["lineFilter"].newValue as LineFilterState | undefined) ?? {
       enabled: false,
       selectedLines: [],
     };
     updateLineFilterEnabledState();
     renderLineFilterList();
-    void refreshBusPositions(monitoredStopId);
+    if (monitoredStopId) void refreshBusPositions(monitoredStopId);
+    else if (map) void refreshStopsInViewport();
   }
 });
 
@@ -375,7 +425,10 @@ function updateLineFilterEnabledState(): void {
   }
   lineFilterEnabledInput.checked = lineFilterState.enabled;
 
-  const showAllAvailable = lineFilterState.enabled && lineFilterState.selectedLines.length === 1;
+  const inBrowseMode = monitoredStopId === null;
+
+  // Only meaningful in monitor mode: browse mode has no single stop's bus positions to add to.
+  const showAllAvailable = !inBrowseMode && lineFilterState.enabled && lineFilterState.selectedLines.length === 1;
   showAllOnLineToggleEl.style.display = showAllAvailable ? "inline" : "none";
   if (showAllAvailable) {
     showAllOnLineToggleEl.lastChild!.textContent = ` Vedi tutti i mezzi della linea ${lineFilterState.selectedLines[0]}`;
@@ -383,6 +436,10 @@ function updateLineFilterEnabledState(): void {
     showAllVehiclesOnLine = false;
     showAllOnLineEnabledInput.checked = false;
   }
+
+  // The reverse: only meaningful in browse mode, where the filter list can otherwise be every line
+  // the static data knows about rather than just what's on screen.
+  onlyVisibleLinesToggleEl.style.display = inBrowseMode ? "inline" : "none";
 }
 
 function renderLineFilterList(): void {
@@ -416,6 +473,11 @@ lineFilterEnabledInput.addEventListener("change", () => {
 showAllOnLineEnabledInput.addEventListener("change", () => {
   showAllVehiclesOnLine = showAllOnLineEnabledInput.checked;
   if (monitoredStopId) void refreshBusPositions(monitoredStopId);
+});
+
+onlyVisibleLinesEnabledInput.addEventListener("change", () => {
+  onlyVisibleLines = onlyVisibleLinesEnabledInput.checked;
+  refreshLineFilterOptions();
 });
 
 stopMonitoringButton.addEventListener("click", () => void stopMonitoringFromMap());
@@ -483,10 +545,15 @@ function createMap(lat: number, lon: number, zoom: number): void {
 function addStopMarker(stopId: string, lat: number, lon: number, tooltipHtml: string, selectable: boolean): void {
   const el = document.createElement("div");
   el.className = "stop-marker" + (selectable ? " selectable" : " monitored");
-  // Stops served by a non-bus mode (metro, tram, train, ...) stand out by color, not shape: a
-  // different icon per mode would need a legend, while a color still reads at a glance without one.
-  if (staticData.hasNonBusMode(stopId)) el.classList.add("non-bus");
-  el.textContent = selectable ? "📍" : "🚏";
+  // Stops served by a non-bus mode (metro, tram, train, ...) stand out by color: a browsable stop is
+  // a plain CSS pin (blue for bus, red when a non-bus mode is also there) rather than an emoji, so
+  // the two colors are exact and consistent across platforms — an emoji glyph's own color can't be
+  // overridden, which is why the previous drop-shadow "halo" attempt barely showed up against 📍's
+  // own reddish color. The monitored stop stays the 🚏 emoji: there's only ever one of it, so its
+  // color doesn't need to carry any meaning.
+  const isNonBus = staticData.hasNonBusMode(stopId);
+  if (isNonBus) el.classList.add("non-bus");
+  if (!selectable) el.textContent = "🚏";
   // Leaflet's bindTooltip showed the label on hover (not click); replicate that with a popup
   // toggled on mouseenter/mouseleave instead of MapLibre's default click-to-open.
   const tooltip = new maplibregl.Popup({ offset: 14, closeButton: false, closeOnClick: false }).setHTML(tooltipHtml);
@@ -496,7 +563,10 @@ function addStopMarker(stopId: string, lat: number, lon: number, tooltipHtml: st
   if (selectable) {
     el.addEventListener("click", () => void selectStop(stopId));
   }
-  stopMarkers.set(stopId, new maplibregl.Marker({ element: el }).setLngLat([lon, lat]).addTo(map));
+  const marker = new maplibregl.Marker({ element: el, anchor: selectable ? "bottom" : "center" })
+    .setLngLat([lon, lat])
+    .addTo(map);
+  stopMarkers.set(stopId, marker);
 }
 
 function addBusMarker(

@@ -43,6 +43,7 @@ export class GtfsStaticData {
   private stopRouteTypes = new Map<string, Set<number>>();
   private routeStops = new Map<string, StopSuggestion[]>(); // keyed by routeLabel.toUpperCase()
   private routeLabelsByUpper = new Map<string, string>(); // populated by buildStopIndexes, for the "LINEE" listing
+  private stopLines = new Map<string, Set<string>>(); // stopId -> line labels serving it, for the map's line filter
 
   async load(forceRefresh = false): Promise<void> {
     const zipBytes = await this.ensureCachedZip(forceRefresh);
@@ -58,6 +59,7 @@ export class GtfsStaticData {
     this.stopRouteTypes = new Map();
     this.routeStops = new Map();
     this.routeLabelsByUpper = new Map();
+    this.stopLines = new Map();
   }
 
   tryGetStopName(stopId: string): string | undefined {
@@ -103,8 +105,7 @@ export class GtfsStaticData {
    * which has to match exactly.
    */
   private listAllLines(): StopSuggestion[] {
-    const codes = [...this.routeLabelsByUpper.values()].sort((a, b) => a.localeCompare(b, "it", { numeric: true }));
-    return codes.map((code) => ({
+    return this.getAllRouteLabels().map((code) => ({
       stopId: code,
       stopName: `${this.routeStops.get(code.toUpperCase())?.length ?? 0} fermate`,
       isLine: true,
@@ -127,7 +128,20 @@ export class GtfsStaticData {
     return results.slice(0, maxResults);
   }
 
-  getStopsInBounds(north: number, south: number, east: number, west: number, maxResults: number): NearbyStop[] {
+  /**
+   * Stops inside a bounding box, nearest to its center first. With [lineFilter] non-empty, only
+   * stops served by at least one of those lines are considered — applied here rather than after
+   * slicing to maxResults, so the cap is on matching stops, not on "nearest N of any line" filtered
+   * down afterwards to possibly far fewer.
+   */
+  getStopsInBounds(
+    north: number,
+    south: number,
+    east: number,
+    west: number,
+    maxResults: number,
+    lineFilter?: ReadonlySet<string>
+  ): NearbyStop[] {
     const centerLat = (north + south) / 2;
     const centerLon = (east + west) / 2;
 
@@ -135,6 +149,7 @@ export class GtfsStaticData {
     for (const [stopId, stop] of this.stops) {
       if (stop.lat === 0 && stop.lon === 0) continue;
       if (stop.lat > north || stop.lat < south || stop.lon > east || stop.lon < west) continue;
+      if (lineFilter && lineFilter.size > 0 && !this.stopServesAnyLine(stopId, lineFilter)) continue;
       results.push({
         stopId,
         stopName: stop.name,
@@ -250,6 +265,7 @@ export class GtfsStaticData {
     // follows the physical order of the route instead of being alphabetical.
     const routeStopSequence = new Map<string, Map<string, number>>();
     const routeLabelsByUpper = new Map<string, string>();
+    const stopLines = new Map<string, Set<string>>();
 
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i]!;
@@ -276,6 +292,13 @@ export class GtfsStaticData {
       const routeKey = routeLabel.toUpperCase();
       routeLabelsByUpper.set(routeKey, routeLabel);
 
+      let linesForStop = stopLines.get(stopId);
+      if (!linesForStop) {
+        linesForStop = new Set();
+        stopLines.set(stopId, linesForStop);
+      }
+      linesForStop.add(routeLabel);
+
       let stopsForRoute = routeStopSequence.get(routeKey);
       if (!stopsForRoute) {
         stopsForRoute = new Map();
@@ -300,6 +323,7 @@ export class GtfsStaticData {
     }
     this.routeStops = routeStops;
     this.routeLabelsByUpper = routeLabelsByUpper;
+    this.stopLines = stopLines;
   }
 
   /**
@@ -313,6 +337,24 @@ export class GtfsStaticData {
     if (!types) return false;
     for (const t of types) if (t !== BUS_ROUTE_TYPE) return true;
     return false;
+  }
+
+  /** Line labels serving a stop, once buildStopIndexes() has run; undefined until then. */
+  tryGetStopLines(stopId: string): ReadonlySet<string> | undefined {
+    return this.stopLines.get(stopId);
+  }
+
+  /** True once buildStopIndexes() has learned this stop is served by at least one of [lines]. */
+  stopServesAnyLine(stopId: string, lines: ReadonlySet<string>): boolean {
+    const stopLines = this.stopLines.get(stopId);
+    if (!stopLines) return false;
+    for (const line of lines) if (stopLines.has(line)) return true;
+    return false;
+  }
+
+  /** Every line label known, once buildStopIndexes() has run — for the map's line filter list. */
+  getAllRouteLabels(): string[] {
+    return [...this.routeLabelsByUpper.values()].sort((a, b) => a.localeCompare(b, "it", { numeric: true }));
   }
 
   /** Human-readable transport mode(s) for a stop (e.g. "Bus", "Metro/Bus"), once buildStopIndexes() has run. */

@@ -200,7 +200,11 @@ async function startMonitoring(): Promise<void> {
   arrivalsEl.classList.add("loading");
   arrivalsEl.textContent = "Ricerca in corso, attendere qualche secondo...";
 
+  // startMonitoringStop also resets the shared line filter (see its own comment): mirror that here
+  // so this popup's own view of it doesn't stay stale until the next reopen.
   await startMonitoringStop(stopId);
+  lineFilterState = { enabled: false, selectedLines: [] };
+  updateLineFilterEnabledState();
   availableLines.clear();
   renderLineFilterList();
 
@@ -210,6 +214,8 @@ async function startMonitoring(): Promise<void> {
 async function stopMonitoring(): Promise<void> {
   monitoredStopId = null;
   await stopMonitoringStop();
+  lineFilterState = { enabled: false, selectedLines: [] };
+  updateLineFilterEnabledState();
   await clearCachedArrivals();
   setMonitoringUiState(false);
   lastArrivals = [];

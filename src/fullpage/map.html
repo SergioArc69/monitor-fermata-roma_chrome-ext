@@ -48,8 +48,6 @@
         display: none;
         align-items: center;
         gap: 10px;
-        overflow-x: auto;
-        white-space: nowrap;
       }
       #lineFilterBar label {
         white-space: nowrap;
@@ -58,12 +56,18 @@
         flex: none;
         font-weight: 600;
       }
-      #showAllOnLineToggle {
+      #showAllOnLineToggle,
+      #onlyVisibleLinesToggle {
         flex: none;
       }
+      /* Only the chips scroll horizontally when the lines don't fit — the two checkboxes stay put. */
       #lineFilterList {
         display: flex;
         gap: 8px;
+        flex: 1;
+        min-width: 0;
+        overflow-x: auto;
+        white-space: nowrap;
       }
       #map {
         position: absolute;
@@ -105,7 +109,6 @@
         background: #e8f0fe;
         color: #1a54c4;
       }
-      .stop-marker,
       .bus-icon {
         font-size: 20px;
         text-align: center;
@@ -113,14 +116,31 @@
         filter: drop-shadow(0 0 2px white);
         cursor: default;
       }
-      .stop-marker.selectable {
-        cursor: pointer;
-      }
       .stop-marker.monitored {
         font-size: 22px;
+        text-align: center;
+        line-height: 22px;
+        filter: drop-shadow(0 0 2px white);
+        cursor: default;
       }
-      .stop-marker.non-bus {
+      .stop-marker.monitored.non-bus {
         filter: drop-shadow(0 0 3px #7b1fa2) drop-shadow(0 0 3px #7b1fa2);
+      }
+      /* A plain CSS pin (not an emoji) so the color is exact: blue for a bus-only stop, red when a
+         non-bus mode (metro, tram, train, ...) also serves it. The point of the teardrop is anchored
+         to the stop's actual location (see the marker's anchor: "bottom" in addStopMarker). */
+      .stop-marker.selectable {
+        width: 16px;
+        height: 16px;
+        border-radius: 50% 50% 50% 0;
+        transform: rotate(-45deg);
+        background: #1a73e8;
+        border: 2px solid #ffffff;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+        cursor: pointer;
+      }
+      .stop-marker.selectable.non-bus {
+        background: #d32f2f;
       }
       .me-marker {
         width: 16px;
@@ -152,6 +172,9 @@
       <div id="lineFilterList"></div>
       <label id="showAllOnLineToggle" style="display: none">
         <input type="checkbox" id="showAllOnLineEnabled" /> Vedi tutti i mezzi della linea
+      </label>
+      <label id="onlyVisibleLinesToggle" style="display: none">
+        <input type="checkbox" id="onlyVisibleLinesEnabled" /> Solo linee visibili
       </label>
     </div>
     <div id="map"></div>
