@@ -75,6 +75,10 @@
         min-height: 16px;
         margin-bottom: 4px;
       }
+      #stopHint.error {
+        font-style: normal;
+        color: #b3261e;
+      }
 
       .settings-toggle-row {
         display: flex;
@@ -195,7 +199,7 @@
       }
       .arrival-row {
         display: flex;
-        justify-content: space-between;
+        align-items: baseline;
         gap: 8px;
         padding: 3px 6px;
       }
@@ -205,9 +209,24 @@
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+      .arrival-row .destination.scheduled {
+        color: #888;
+      }
       .arrival-row .minutes {
+        flex: 1;
         color: #333;
+        font-weight: 600;
         white-space: nowrap;
+      }
+      .arrival-row .delay {
+        flex: none;
+        width: 60px;
+        text-align: right;
+        color: #666;
+        font-size: 11px;
+      }
+      .arrival-row .delay.late {
+        color: #b3261e;
       }
       #arrivals {
         max-height: 260px;
@@ -220,7 +239,12 @@
 
     <div class="search-row">
       <button id="mapButton" title="Mostra mappa">🗺</button>
-      <input id="stopInput" type="text" placeholder="Cerca fermata (codice o nome)" autocomplete="off" />
+      <input
+        id="stopInput"
+        type="text"
+        placeholder="Cerca fermata (codice o nome), o scrivi LINEE"
+        autocomplete="off"
+      />
       <button id="monitorButton">Monitora</button>
       <button id="stopButton" disabled>Ferma</button>
       <div id="suggestions"></div>

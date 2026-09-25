@@ -2,7 +2,7 @@ import { GtfsStaticData } from "../data/gtfsStaticData.js";
 import { GtfsRealtimeService } from "../data/gtfsRealtimeService.js";
 import { RecentStopsService } from "../data/recentStopsService.js";
 import type { ArrivalInfo, StopSuggestion } from "../shared/models.js";
-import { destinationLabel, delayLabel, minutesLabel } from "../shared/arrivalFormatting.js";
+import { commonDestination, destinationLabel, delayLabel, minutesLabel } from "../shared/arrivalFormatting.js";
 import { MONITORED_STOP_KEY, MONITOR_ALARM_NAME } from "../shared/storageKeys.js";
 import { DEFAULT_NOTIFY_SETTINGS, getNotifySettings, setNotifySettings } from "../shared/notifySettings.js";
 import { applyLineFilter, getLineFilter, setLineFilter, type LineFilterState } from "../shared/lineFilter.js";
@@ -103,6 +103,7 @@ async function saveNotifySettingsFromUi(): Promise<void> {
 }
 
 function updateStopHint(): void {
+  stopHintEl.classList.remove("error");
   const stopId = stopInput.value.trim();
   if (!stopId) {
     stopHintEl.textContent = "";
@@ -143,10 +144,17 @@ function renderSuggestions(items: StopSuggestion[]): void {
 
   for (const item of items) {
     const row = document.createElement("div");
-    row.textContent = `${item.stopId} — ${item.stopName}`;
+    row.textContent = item.isLine ? `🚌 Linea ${item.stopId} — ${item.stopName}` : `${item.stopId} — ${item.stopName}`;
     row.addEventListener("click", () => {
       stopInput.value = item.stopId;
-      suggestionsEl.style.display = "none";
+      if (item.isLine) {
+        // Picking a line searches its code instead of ending the search, so the field then lists
+        // that line's stops.
+        void updateSuggestions();
+        stopInput.focus();
+      } else {
+        suggestionsEl.style.display = "none";
+      }
       updateStopHint();
     });
     suggestionsEl.appendChild(row);
@@ -174,6 +182,17 @@ async function startMonitoring(): Promise<void> {
     return;
   }
 
+  // Only refuse a code the static data is sure does not exist: with it not loaded yet there is
+  // nothing to check against, so it is let through (the realtime feed can know a stop the static
+  // data doesn't, too). Checked here, before touching "recent stops" or starting a useless poll —
+  // unlike the warning below, which still applies once monitoring is under way.
+  if (staticDataReady && !staticData.tryGetStopName(stopId)) {
+    stopHintEl.textContent = `Codice fermata "${stopId}" non trovato`;
+    stopHintEl.classList.add("error");
+    return;
+  }
+  stopHintEl.classList.remove("error");
+
   monitoredStopId = stopId;
   setMonitoringUiState(true);
   setStatusLoading("Ricerca corse in arrivo...");
@@ -184,13 +203,6 @@ async function startMonitoring(): Promise<void> {
   await startMonitoringStop(stopId);
   availableLines.clear();
   renderLineFilterList();
-
-  if (staticDataReady) {
-    const name = staticData.tryGetStopName(stopId);
-    if (!name) {
-      setStatusLoading(`Attenzione: codice fermata '${stopId}' non trovato nel GTFS statico (proseguo comunque con i dati realtime)...`);
-    }
-  }
 
   await refreshArrivals();
 }
@@ -337,26 +349,41 @@ function renderArrivals(arrivals: ArrivalInfo[]): void {
 
   const lineLabels = [...byLine.keys()].sort((a, b) => a.localeCompare(b, "it", { numeric: true }));
   for (const line of lineLabels) {
+    const lineArrivals = byLine.get(line)!;
+    const destination = commonDestination(lineArrivals);
+
     const groupEl = document.createElement("div");
     groupEl.className = "arrivals-group";
 
     const heading = document.createElement("h2");
-    heading.textContent = `Linea ${line}`;
+    heading.textContent = destination ? `Linea ${line} → ${destination}` : `Linea ${line}`;
     groupEl.appendChild(heading);
 
-    for (const arrival of byLine.get(line)!) {
+    // When every run agrees on a destination it's shown once, on the heading above, rather than
+    // repeated on every row.
+    for (const arrival of lineArrivals) {
       const row = document.createElement("div");
       row.className = "arrival-row";
 
-      const dest = document.createElement("span");
-      dest.className = "destination";
-      dest.textContent = destinationLabel(arrival);
+      if (!destination) {
+        const dest = document.createElement("span");
+        dest.className = "destination";
+        dest.textContent = destinationLabel(arrival);
+        if (!arrival.isRealtime) dest.classList.add("scheduled");
+        row.appendChild(dest);
+      }
 
       const minutes = document.createElement("span");
       minutes.className = "minutes";
-      minutes.textContent = `${minutesLabel(arrival)} · ${delayLabel(arrival)}`;
+      minutes.textContent = `${minutesLabel(arrival)} [${arrival.arrivalTime.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" })}]`;
+      row.appendChild(minutes);
 
-      row.append(dest, minutes);
+      const delay = document.createElement("span");
+      delay.className = "delay";
+      delay.textContent = delayLabel(arrival);
+      if (arrival.isRealtime && arrival.delaySeconds > 60) delay.classList.add("late");
+      row.appendChild(delay);
+
       groupEl.appendChild(row);
     }
 

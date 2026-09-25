@@ -6,8 +6,23 @@ export function displayName(arrival: ArrivalInfo): string {
     : `Linea ${arrival.routeLabel}`;
 }
 
+export const unknownDestination = "—";
+
 export function destinationLabel(arrival: ArrivalInfo): string {
-  return arrival.headsign || "—";
+  return arrival.headsign || unknownDestination;
+}
+
+/**
+ * The destination to show once, next to the line's name, instead of on every row: only when every
+ * run agrees on a real one. A stop served in more than one direction can have runs of the same line
+ * going different ways, so those keep the per-row destination instead — and so does a line the feed
+ * never gives a destination for (some don't): unknownDestination never counts as "agreed".
+ */
+export function commonDestination(lineArrivals: ArrivalInfo[]): string | null {
+  const destinations = new Set(lineArrivals.map(destinationLabel));
+  if (destinations.size !== 1) return null;
+  const [only] = destinations;
+  return only === unknownDestination ? null : only!;
 }
 
 export function timeUntilArrivalMs(arrival: ArrivalInfo, now: Date = new Date()): number {

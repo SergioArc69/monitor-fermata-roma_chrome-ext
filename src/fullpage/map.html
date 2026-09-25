@@ -58,6 +58,9 @@
         flex: none;
         font-weight: 600;
       }
+      #showAllOnLineToggle {
+        flex: none;
+      }
       #lineFilterList {
         display: flex;
         gap: 8px;
@@ -116,6 +119,9 @@
       .stop-marker.monitored {
         font-size: 22px;
       }
+      .stop-marker.non-bus {
+        filter: drop-shadow(0 0 3px #7b1fa2) drop-shadow(0 0 3px #7b1fa2);
+      }
       .me-marker {
         width: 16px;
         height: 16px;
@@ -144,6 +150,9 @@
     <div id="lineFilterBar">
       <label id="lineFilterToggle"><input type="checkbox" id="lineFilterEnabled" disabled /> Filtra per linea</label>
       <div id="lineFilterList"></div>
+      <label id="showAllOnLineToggle" style="display: none">
+        <input type="checkbox" id="showAllOnLineEnabled" /> Vedi tutti i mezzi della linea
+      </label>
     </div>
     <div id="map"></div>
     <div id="busStatusBar"></div>

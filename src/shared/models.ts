@@ -19,6 +19,8 @@ export interface StopInfo {
 export interface StopSuggestion {
   stopId: string;
   stopName: string;
+  /** Set when this entry is a line (from the "LINEE" keyword), not a stop: picking it re-searches by its code instead of selecting it directly. */
+  isLine?: boolean;
 }
 
 export interface NearbyStop {

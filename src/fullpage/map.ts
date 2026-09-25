@@ -16,7 +16,9 @@ import { getCachedArrivals } from "../shared/arrivalsCache.js";
 maplibregl.setWorkerUrl(chrome.runtime.getURL("dist/maplibre-gl-worker.mjs"));
 
 const MAX_VISIBLE_STOPS = 150;
-const BUS_REFRESH_INTERVAL_MS = 20_000;
+// Matches Roma Mobilità's own update cadence (about every 10s): polling faster would just ask again
+// for the same snapshot.
+const BUS_REFRESH_INTERVAL_MS = 10_000;
 const ROME_FALLBACK = { lat: 41.9028, lon: 12.4964 };
 const MAX_DISTANCE_FROM_ROME_KM = 50;
 
@@ -27,6 +29,8 @@ const stopMonitoringButton = document.getElementById("stopMonitoringButton") as 
 const lineFilterBarEl = document.getElementById("lineFilterBar") as HTMLDivElement;
 const lineFilterEnabledInput = document.getElementById("lineFilterEnabled") as HTMLInputElement;
 const lineFilterListEl = document.getElementById("lineFilterList") as HTMLDivElement;
+const showAllOnLineToggleEl = document.getElementById("showAllOnLineToggle") as HTMLLabelElement;
+const showAllOnLineEnabledInput = document.getElementById("showAllOnLineEnabled") as HTMLInputElement;
 
 const staticData = new GtfsStaticData();
 const realtimeService = new GtfsRealtimeService(staticData);
@@ -57,6 +61,9 @@ let recentArrivalsByTripId = new Map<string, ArrivalInfo>();
 // both places.
 let lineFilterState: LineFilterState = { enabled: false, selectedLines: [] };
 const availableLines = new Set<string>();
+// Only meaningful (and only offered) with exactly one line checked in the filter: "all vehicles of
+// the line" needs one line to mean anything.
+let showAllVehiclesOnLine = false;
 
 async function init(): Promise<void> {
   instructionEl.textContent = "Caricamento dati...";
@@ -95,12 +102,14 @@ async function enterMonitorMode(stopId: string): Promise<void> {
     return;
   }
 
-  instructionEl.textContent = "Fermata monitorata, con la posizione dei bus in transito (aggiornata ogni 20 secondi).";
+  instructionEl.textContent = `Fermata monitorata, con la posizione dei bus in transito (aggiornata ogni ${BUS_REFRESH_INTERVAL_MS / 1000} secondi).`;
   stopMonitoringButton.style.display = "block";
   mapEl.classList.add("with-bus-bar");
   busStatusBarEl.style.display = "flex";
 
   availableLines.clear();
+  showAllVehiclesOnLine = false;
+  showAllOnLineEnabledInput.checked = false;
   mapEl.classList.add("with-line-filter");
   lineFilterBarEl.style.display = "flex";
   lineFilterState = await getLineFilter();
@@ -257,15 +266,28 @@ async function refreshBusPositions(stopId: string): Promise<void> {
     const filteredTripIds = new Set(
       applyLineFilter([...recentArrivalsByTripId.values()], lineFilterState).map((a) => a.tripId)
     );
-    if (filteredTripIds.size === 0) {
+    const showAllOnLine = showAllVehiclesOnLine && lineFilterState.enabled && lineFilterState.selectedLines.length === 1;
+    if (filteredTripIds.size === 0 && !showAllOnLine) {
       clearBusMarkers();
       busStatusBarEl.innerHTML = "";
       return;
     }
 
     const arrivalByTripId = recentArrivalsByTripId;
-    const positions = await vehiclePositions.getPositionsForTrips(filteredTripIds);
+    const byTripId = new Map(
+      (await vehiclePositions.getPositionsForTrips(filteredTripIds)).map((p) => [p.tripId, p])
+    );
     if (monitoredStopId !== stopId) return;
+    // "See all" adds every other vehicle of the line, city-wide, beyond the ones already found from
+    // this stop's arrivals; a vehicle in both stays the one keyed by trip id, since the two describe
+    // the same vehicle.
+    if (showAllOnLine) {
+      for (const p of await vehiclePositions.getPositionsForRoute(lineFilterState.selectedLines[0]!, staticData)) {
+        if (!byTripId.has(p.tripId)) byTripId.set(p.tripId, p);
+      }
+      if (monitoredStopId !== stopId) return;
+    }
+    const positions = [...byTripId.values()];
 
     // For buses currently stopped, look up the realtime predicted departure from the stop they're
     // sitting at, so the chip can show when they're expected to move on.
@@ -352,6 +374,15 @@ function updateLineFilterEnabledState(): void {
     void setLineFilter(lineFilterState);
   }
   lineFilterEnabledInput.checked = lineFilterState.enabled;
+
+  const showAllAvailable = lineFilterState.enabled && lineFilterState.selectedLines.length === 1;
+  showAllOnLineToggleEl.style.display = showAllAvailable ? "inline" : "none";
+  if (showAllAvailable) {
+    showAllOnLineToggleEl.lastChild!.textContent = ` Vedi tutti i mezzi della linea ${lineFilterState.selectedLines[0]}`;
+  } else if (showAllVehiclesOnLine) {
+    showAllVehiclesOnLine = false;
+    showAllOnLineEnabledInput.checked = false;
+  }
 }
 
 function renderLineFilterList(): void {
@@ -380,6 +411,11 @@ async function onLineFilterSelectionChanged(line: string, checked: boolean): Pro
 
 lineFilterEnabledInput.addEventListener("change", () => {
   void setLineFilter({ ...lineFilterState, enabled: lineFilterEnabledInput.checked });
+});
+
+showAllOnLineEnabledInput.addEventListener("change", () => {
+  showAllVehiclesOnLine = showAllOnLineEnabledInput.checked;
+  if (monitoredStopId) void refreshBusPositions(monitoredStopId);
 });
 
 stopMonitoringButton.addEventListener("click", () => void stopMonitoringFromMap());
@@ -447,6 +483,9 @@ function createMap(lat: number, lon: number, zoom: number): void {
 function addStopMarker(stopId: string, lat: number, lon: number, tooltipHtml: string, selectable: boolean): void {
   const el = document.createElement("div");
   el.className = "stop-marker" + (selectable ? " selectable" : " monitored");
+  // Stops served by a non-bus mode (metro, tram, train, ...) stand out by color, not shape: a
+  // different icon per mode would need a legend, while a color still reads at a glance without one.
+  if (staticData.hasNonBusMode(stopId)) el.classList.add("non-bus");
   el.textContent = selectable ? "📍" : "🚏";
   // Leaflet's bindTooltip showed the label on hover (not click); replicate that with a popup
   // toggled on mouseenter/mouseleave instead of MapLibre's default click-to-open.

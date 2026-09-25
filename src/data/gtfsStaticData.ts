@@ -7,6 +7,9 @@ const STATIC_FEED_URL = "https://romamobilita.it/sites/default/files/rome_static
 const CACHE_LIFETIME_MS = 24 * 60 * 60 * 1000; // checked/refreshed at most once a day
 const META_STORAGE_KEY = "gtfsStaticMeta";
 
+/** Typed into the search field, lists every line instead of matching one: the way in when the exact code isn't known by heart. */
+export const linesKeyword = "LINEE";
+
 const ROUTE_TYPE_NAMES: Record<number, string> = {
   0: "Tram",
   1: "Metro",
@@ -17,6 +20,8 @@ const ROUTE_TYPE_NAMES: Record<number, string> = {
   6: "Funivia",
   7: "Funicolare",
 };
+
+const BUS_ROUTE_TYPE = 3;
 
 interface StaticMeta {
   lastModifiedHeader?: string;
@@ -37,6 +42,7 @@ export class GtfsStaticData {
   private activeServiceDates = new Set<string>(); // `${serviceId}|${yyyymmdd}`
   private stopRouteTypes = new Map<string, Set<number>>();
   private routeStops = new Map<string, StopSuggestion[]>(); // keyed by routeLabel.toUpperCase()
+  private routeLabelsByUpper = new Map<string, string>(); // populated by buildStopIndexes, for the "LINEE" listing
 
   async load(forceRefresh = false): Promise<void> {
     const zipBytes = await this.ensureCachedZip(forceRefresh);
@@ -51,6 +57,7 @@ export class GtfsStaticData {
     // Stale after a refresh; rebuilt by buildStopIndexes (a separate, much heavier on-demand scan).
     this.stopRouteTypes = new Map();
     this.routeStops = new Map();
+    this.routeLabelsByUpper = new Map();
   }
 
   tryGetStopName(stopId: string): string | undefined {
@@ -67,11 +74,14 @@ export class GtfsStaticData {
    * An exact (case-insensitive) match against a known line number takes priority and returns that
    * line's stops in route order — e.g. typing "53" lists every stop line 53 serves. Otherwise falls
    * back to matching the query against both the stop code and the stop name (codes aren't always
-   * numeric, e.g. "BP16").
+   * numeric, e.g. "BP16"). The special query [linesKeyword] lists every line instead, for when the
+   * exact code isn't known.
    */
   searchStops(query: string, maxResults: number): StopSuggestion[] {
     const trimmed = query.trim();
     if (!trimmed) return [];
+
+    if (trimmed.toUpperCase() === linesKeyword) return this.listAllLines();
 
     const routeMatch = this.routeStops.get(trimmed.toUpperCase());
     if (routeMatch && routeMatch.length > 0) return routeMatch.slice(0, maxResults);
@@ -85,6 +95,20 @@ export class GtfsStaticData {
     }
     results.sort((a, b) => a.stopName.localeCompare(b.stopName, "it", { sensitivity: "base" }));
     return results.slice(0, maxResults);
+  }
+
+  /**
+   * Every line known once buildStopIndexes() has run, as StopSuggestions (isLine set): picking one
+   * and searching its code is guaranteed to find something, unlike a line number typed from memory,
+   * which has to match exactly.
+   */
+  private listAllLines(): StopSuggestion[] {
+    const codes = [...this.routeLabelsByUpper.values()].sort((a, b) => a.localeCompare(b, "it", { numeric: true }));
+    return codes.map((code) => ({
+      stopId: code,
+      stopName: `${this.routeStops.get(code.toUpperCase())?.length ?? 0} fermate`,
+      isLine: true,
+    }));
   }
 
   getNearbyStops(lat: number, lon: number, maxResults: number): NearbyStop[] {
@@ -275,6 +299,20 @@ export class GtfsStaticData {
       routeStops.set(routeKey, ordered);
     }
     this.routeStops = routeStops;
+    this.routeLabelsByUpper = routeLabelsByUpper;
+  }
+
+  /**
+   * True once buildStopIndexes() has learned this stop is served by a mode other than bus (metro,
+   * tram, train, ...) — used to tell those stops apart on the map. False (not just "unknown") until
+   * the index is built, same as tryGetStopModes returning undefined, so a stop simply looks like an
+   * ordinary bus stop until the background scan catches up.
+   */
+  hasNonBusMode(stopId: string): boolean {
+    const types = this.stopRouteTypes.get(stopId);
+    if (!types) return false;
+    for (const t of types) if (t !== BUS_ROUTE_TYPE) return true;
+    return false;
   }
 
   /** Human-readable transport mode(s) for a stop (e.g. "Bus", "Metro/Bus"), once buildStopIndexes() has run. */
