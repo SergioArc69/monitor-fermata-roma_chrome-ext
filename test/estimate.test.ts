@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { estimatePosition, type PredictedStop } from "../src/estimate/positionEstimator.js";
 import { ShapeGeometry } from "../src/estimate/shapeGeometry.js";
+import { VehicleEstimator } from "../src/estimate/vehicleEstimator.js";
 import { VehicleHistory } from "../src/estimate/vehicleHistory.js";
+import type { VehiclePositionInfo } from "../src/shared/models.js";
 
 const M = 111194.93; // metres per degree of latitude
 const LON = 12.5;
@@ -134,5 +136,39 @@ describe("VehicleHistory", () => {
     assert.equal(h.previousFor("t", 1000)?.secs, 960); // 990 is only 10 s before
     assert.equal(h.previousFor("t", 1300)?.secs ?? null, null); // all older than 240 s
     assert.equal(h.previousFor("other", 1000), null);
+  });
+});
+
+describe("VehicleEstimator", () => {
+  const shape = straight();
+  const staticData = {
+    getShapesForTrips: async () => new Map([["t", shape]]),
+    tryGetStopLocation: () => ({ lat: latAt(900), lon: LON }),
+  };
+  const realtime = {
+    getStopTimeUpdatesForTrips: async () => new Map([["t", [{ stopId: "s", stopSequence: 2, arrival: { time: 1300 } }]]]),
+  };
+  const estimator = new VehicleEstimator(staticData as never, realtime as never);
+  const vehicle = (meters: number, reportedSecs: number): VehiclePositionInfo => ({
+    tripId: "t",
+    vehicleLabel: "1",
+    lat: latAt(meters),
+    lon: LON,
+    isStopped: false,
+    currentStopId: "",
+    stopSequence: 2,
+    reportedSecs,
+  });
+
+  it("does not take the marker back when a new report shows the vehicle behind the estimate", async () => {
+    // Reported at 200 m at t=1000, the stop (900 m) is due at t=1300: at t=1150 it is at 550 m.
+    const [first] = await estimator.apply([vehicle(200, 1000)], 1_150_000);
+    assert.ok(first!.lat > latAt(500));
+    // At t=1160 a newer report puts it at only 250 m: the estimate (about 330 m) is behind the marker.
+    const [second] = await estimator.apply([vehicle(250, 1100)], 1_160_000);
+    assert.ok(Math.abs(second!.lat - first!.lat) < 1e-6, "held where it was");
+    // A hold does not last for ever: after a minute and a half the estimate is shown as it is.
+    const [third] = await estimator.apply([vehicle(250, 1100)], 1_260_000);
+    assert.ok(third!.lat < first!.lat, "released");
   });
 });

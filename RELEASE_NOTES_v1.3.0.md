@@ -14,6 +14,9 @@ Disponibile sul [Chrome Web Store](https://chromewebstore.google.com/detail/gggj
   ultime segnalazioni risulta fermo nel traffico avanza molto meno. È la stessa stima del server Stally. Se
   la stima non è possibile (nessun tracciato, segnalazione troppo vecchia, percorso ambiguo) il bus resta
   nella posizione segnalata.
+- 🧭 **Il bus non torna indietro**: quando una segnalazione nuova mostra il mezzo più indietro di dove la stima
+  lo aveva portato (rallentato in coda o a un incrocio), il segnaposto resta fermo finché la stima lo
+  raggiunge, per al massimo 90 secondi, invece di fare un salto all'indietro.
 - 🏷️ **Codice e nome della fermata nell'intestazione della mappa**: con il monitoraggio attivo l'intestazione
   riporta ora, ad esempio, "Fermata monitorata: 73953 - BONA, con la posizione dei bus in transito…".
 

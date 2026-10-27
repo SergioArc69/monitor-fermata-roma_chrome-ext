@@ -5,6 +5,25 @@ import { estimatePosition, type PredictedStop } from "./positionEstimator.js";
 import { VehicleHistory } from "./vehicleHistory.js";
 
 /**
+ * A new report often shows the vehicle behind where the last estimate had put it (it slowed down
+ * in traffic, a light, a junction: nothing the predictions know). A bus does not go backwards, so
+ * the marker is held where it was until the estimate catches up, for at most this long.
+ */
+const HOLD_MAX_MS = 90_000;
+/** A step back bigger than this is not that: a wrong earlier guess or another trip, take the new position. */
+const HOLD_MAX_BACK_METERS = 800;
+/** Forget the trips not seen for this long. */
+const SHOWN_RETENTION_MS = 5 * 60_000;
+
+interface Shown {
+  /** Metres along the trip's shape of the position last drawn. */
+  distance: number;
+  /** Since when the marker has been held back, if it is. */
+  holdingSinceMs: number | null;
+  seenMs: number;
+}
+
+/**
  * Moves the vehicles of the map from where their last report put them to where they probably are
  * now (see estimatePosition). Needs what the feed positions alone do not carry: the path of the trip
  * (static shapes) and the predicted times of the stops ahead (TripUpdates).
@@ -13,6 +32,7 @@ import { VehicleHistory } from "./vehicleHistory.js";
  */
 export class VehicleEstimator {
   private readonly history = new VehicleHistory();
+  private readonly shown = new Map<string, Shown>();
 
   constructor(
     private readonly staticData: GtfsStaticData,
@@ -72,7 +92,27 @@ export class VehicleEstimator {
         stops,
         previous: this.history.previousFor(position.tripId, position.reportedSecs),
       });
-      return estimate ? { ...position, lat: estimate.lat, lon: estimate.lon } : position;
+      if (!estimate) return position;
+
+      const drawn = this.keepFromGoingBack(position.tripId, estimate.distance, nowMs);
+      const point = drawn === estimate.distance ? estimate : shape.pointAt(drawn);
+      return { ...position, lat: point.lat, lon: point.lon };
     });
+  }
+
+  /** The distance along the shape to draw: `distance`, unless that would take the marker back. */
+  private keepFromGoingBack(tripId: string, distance: number, nowMs: number): number {
+    for (const [id, shown] of this.shown) if (nowMs - shown.seenMs > SHOWN_RETENTION_MS) this.shown.delete(id);
+
+    const last = this.shown.get(tripId);
+    if (last && distance < last.distance && last.distance - distance <= HOLD_MAX_BACK_METERS) {
+      const since = last.holdingSinceMs ?? nowMs;
+      if (nowMs - since <= HOLD_MAX_MS) {
+        this.shown.set(tripId, { distance: last.distance, holdingSinceMs: since, seenMs: nowMs });
+        return last.distance;
+      }
+    }
+    this.shown.set(tripId, { distance, holdingSinceMs: null, seenMs: nowMs });
+    return distance;
   }
 }
