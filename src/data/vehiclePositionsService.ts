@@ -56,5 +56,8 @@ function toVehiclePositionInfo(vehicle: RtVehiclePosition, tripId: string): Vehi
     lon: vehicle.position?.longitude ?? 0,
     isStopped: vehicle.currentStatus === "STOPPED_AT",
     currentStopId: vehicle.stopId ?? "",
+    // The decoder fills defaults, so an absent field reads 0: neither is ever a real value here.
+    stopSequence: vehicle.currentStopSequence ? vehicle.currentStopSequence : null,
+    reportedSecs: vehicle.timestamp ? vehicle.timestamp : null,
   };
 }

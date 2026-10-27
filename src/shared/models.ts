@@ -8,6 +8,7 @@ export interface TripInfo {
   routeId: string;
   headsign: string;
   serviceId: string;
+  shapeId: string;
 }
 
 export interface StopInfo {
@@ -55,4 +56,8 @@ export interface VehiclePositionInfo {
   isStopped: boolean;
   /** Stop the vehicle is currently at/approaching (GTFS-RT `stop_id`), "" if not reported. */
   currentStopId: string;
+  /** GTFS-RT `current_stop_sequence`, null if not reported. */
+  stopSequence: number | null;
+  /** When the position was taken, POSIX seconds, null if not reported. */
+  reportedSecs: number | null;
 }

@@ -2,6 +2,7 @@ import { unzipSync, strFromU8 } from "fflate";
 import type { NearbyStop, RouteInfo, ScheduledArrival, StopInfo, StopSuggestion, TripInfo } from "../shared/models.js";
 import { parseCsvRecords } from "./csv.js";
 import { getCachedZipBlob, setCachedZipBlob } from "./zipCache.js";
+import { ShapeGeometry } from "../estimate/shapeGeometry.js";
 
 const STATIC_FEED_URL = "https://romamobilita.it/sites/default/files/rome_static_gtfs.zip";
 const CACHE_LIFETIME_MS = 24 * 60 * 60 * 1000; // checked/refreshed at most once a day
@@ -44,6 +45,9 @@ export class GtfsStaticData {
   private routeStops = new Map<string, StopSuggestion[]>(); // keyed by routeLabel.toUpperCase()
   private routeLabelsByUpper = new Map<string, string>(); // populated by buildStopIndexes, for the "LINEE" listing
   private stopLines = new Map<string, Set<string>>(); // stopId -> line labels serving it, for the map's line filter
+  // Shapes already read from shapes.txt, by shape_id; null = looked for and not there. Kept small by
+  // only ever holding the shapes of vehicles that were on the map (a few hundred points each).
+  private shapes = new Map<string, ShapeGeometry | null>();
 
   async load(forceRefresh = false): Promise<void> {
     const zipBytes = await this.ensureCachedZip(forceRefresh);
@@ -60,6 +64,7 @@ export class GtfsStaticData {
     this.routeStops = new Map();
     this.routeLabelsByUpper = new Map();
     this.stopLines = new Map();
+    this.shapes = new Map();
   }
 
   tryGetStopName(stopId: string): string | undefined {
@@ -177,6 +182,78 @@ export class GtfsStaticData {
 
   getTrip(tripId: string): TripInfo | undefined {
     return this.trips.get(tripId);
+  }
+
+  /**
+   * The paths of the given trips (for the position estimate), by trip id; a trip with no shape is
+   * left out. shapes.txt (tens of MB uncompressed) is decompressed and scanned only when some shape
+   * is not known yet, once for all the missing ones, and never kept resident: only the shapes asked
+   * for are.
+   */
+  async getShapesForTrips(tripIds: Iterable<string>): Promise<Map<string, ShapeGeometry>> {
+    const shapeIdByTrip = new Map<string, string>();
+    const missing = new Set<string>();
+    for (const tripId of tripIds) {
+      const shapeId = this.trips.get(tripId)?.shapeId;
+      if (!shapeId) continue;
+      shapeIdByTrip.set(tripId, shapeId);
+      if (!this.shapes.has(shapeId)) missing.add(shapeId);
+    }
+
+    if (missing.size > 0) {
+      const found = await this.readShapes(missing);
+      for (const id of missing) this.shapes.set(id, found.get(id) ?? null);
+    }
+
+    const result = new Map<string, ShapeGeometry>();
+    for (const [tripId, shapeId] of shapeIdByTrip) {
+      const shape = this.shapes.get(shapeId);
+      if (shape) result.set(tripId, shape);
+    }
+    return result;
+  }
+
+  private async readShapes(wanted: ReadonlySet<string>): Promise<Map<string, ShapeGeometry>> {
+    const zipBytes = await this.ensureCachedZip(false);
+    const files = unzipSync(zipBytes, { filter: (file) => file.name === "shapes.txt" });
+    const bytes = files["shapes.txt"];
+    const result = new Map<string, ShapeGeometry>();
+    if (!bytes) return result;
+
+    // Like stop_times.txt, shapes.txt has no quoted fields in this feed: a plain split is safe and fast.
+    const lines = strFromU8(bytes).split("\n");
+    const headers = (lines[0] ?? "").replace(/^\uFEFF/, "").replace(/\r$/, "").split(",");
+    const idIdx = headers.indexOf("shape_id");
+    const latIdx = headers.indexOf("shape_pt_lat");
+    const lonIdx = headers.indexOf("shape_pt_lon");
+    const seqIdx = headers.indexOf("shape_pt_sequence");
+    if (idIdx < 0 || latIdx < 0 || lonIdx < 0) return result;
+
+    const points = new Map<string, Array<[number, number, number]>>(); // shapeId -> [seq, lat, lon]
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i]!;
+      if (!line) continue;
+      const fields = line.split(",");
+      const id = fields[idIdx];
+      if (!id || !wanted.has(id)) continue;
+      const lat = Number.parseFloat(fields[latIdx] ?? "");
+      const lon = Number.parseFloat(fields[lonIdx] ?? "");
+      if (Number.isNaN(lat) || Number.isNaN(lon)) continue;
+      const parsedSeq = seqIdx >= 0 ? Number.parseInt(fields[seqIdx] ?? "", 10) : Number.NaN;
+      let list = points.get(id);
+      if (!list) {
+        list = [];
+        points.set(id, list);
+      }
+      list.push([Number.isNaN(parsedSeq) ? list.length : parsedSeq, lat, lon]);
+    }
+
+    for (const [id, list] of points) {
+      list.sort((a, b) => a[0] - b[0]);
+      const shape = ShapeGeometry.fromPoints(list.map(([, lat, lon]) => [lat, lon] as const));
+      if (shape) result.set(id, shape);
+    }
+    return result;
   }
 
   /**
@@ -459,6 +536,7 @@ function parseTrips(bytes: Uint8Array | undefined): Map<string, TripInfo> {
       routeId: row["route_id"] ?? "",
       headsign: row["trip_headsign"] ?? "",
       serviceId: row["service_id"] ?? "",
+      shapeId: row["shape_id"] ?? "",
     });
   }
   return result;

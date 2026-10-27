@@ -1,13 +1,13 @@
 # Listing Chrome Web Store — bozza (italiano)
 
 ## Titolo (max 45 caratteri)
-Monitor Fermata ATAC Roma
+Stally - Monitor Fermata ATAC Roma
 
 ## Descrizione breve (max 132 caratteri)
 Orari bus in tempo reale per le fermate di Roma, con mappa e notifiche di arrivo. Dati aperti Roma Mobilità.
 
 ## Descrizione estesa
-Monitor Fermata ATAC Roma mostra gli orari di arrivo dei bus (e metro/tram) a Roma in tempo
+Stally - Monitor Fermata ATAC Roma mostra gli orari di arrivo dei bus (e metro/tram) a Roma in tempo
 reale, usando i dati aperti GTFS-RT di Roma Mobilità — comodo da controllare mentre sei ancora
 alla scrivania, prima di uscire verso la fermata.
 

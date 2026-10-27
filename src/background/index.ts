@@ -5,10 +5,10 @@ import { MONITORED_STOP_KEY, MONITOR_ALARM_NAME } from "../shared/storageKeys.js
 import { applyLineFilter, getLineFilter } from "../shared/lineFilter.js";
 import { setCachedArrivals } from "../shared/arrivalsCache.js";
 
-console.log("[Monitor Fermata ATAC Roma] service worker avviato.");
+console.log("[Stally - Monitor Fermata ATAC Roma] service worker avviato.");
 
 chrome.runtime.onInstalled.addListener(() => {
-  console.log("[Monitor Fermata ATAC Roma] estensione installata/aggiornata.");
+  console.log("[Stally - Monitor Fermata ATAC Roma] estensione installata/aggiornata.");
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -37,6 +37,6 @@ async function pollMonitoredStop(): Promise<void> {
   } catch (error) {
     // HTTP errors and truncated-response decode failures are transient upstream feed hiccups,
     // not application bugs: the next poll (in 1 minute) retries on its own.
-    console.warn("[Monitor Fermata ATAC Roma] poll in background non riuscito (riprovo al prossimo ciclo):", error);
+    console.warn("[Stally - Monitor Fermata ATAC Roma] poll in background non riuscito (riprovo al prossimo ciclo):", error);
   }
 }

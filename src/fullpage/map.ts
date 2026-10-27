@@ -3,6 +3,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { GtfsStaticData } from "../data/gtfsStaticData.js";
 import { GtfsRealtimeService } from "../data/gtfsRealtimeService.js";
 import { VehiclePositionsService } from "../data/vehiclePositionsService.js";
+import { VehicleEstimator } from "../estimate/vehicleEstimator.js";
 import { getMonitoredStopId, startMonitoringStop, stopMonitoringStop } from "../shared/monitoringController.js";
 import type { ArrivalInfo } from "../shared/models.js";
 import { minutesLabel } from "../shared/arrivalFormatting.js";
@@ -37,6 +38,7 @@ const onlyVisibleLinesEnabledInput = document.getElementById("onlyVisibleLinesEn
 const staticData = new GtfsStaticData();
 const realtimeService = new GtfsRealtimeService(staticData);
 const vehiclePositions = new VehiclePositionsService();
+const vehicleEstimator = new VehicleEstimator(staticData, realtimeService);
 
 let map: maplibregl.Map;
 let meMarker: maplibregl.Marker | null = null;
@@ -115,7 +117,9 @@ async function enterMonitorMode(stopId: string): Promise<void> {
     return;
   }
 
-  instructionEl.textContent = `Fermata monitorata, con la posizione dei bus in transito (aggiornata ogni ${BUS_REFRESH_INTERVAL_MS / 1000} secondi).`;
+  const monitoredName = staticData.tryGetStopName(stopId);
+  const monitoredLabel = monitoredName ? `${stopId} - ${monitoredName}` : stopId;
+  instructionEl.textContent = `Fermata monitorata: ${monitoredLabel}, con la posizione dei bus in transito (aggiornata ogni ${BUS_REFRESH_INTERVAL_MS / 1000} secondi).`;
   stopMonitoringButton.style.display = "block";
   mapEl.classList.add("with-bus-bar");
   busStatusBarEl.style.display = "flex";
@@ -336,7 +340,9 @@ async function refreshBusPositions(stopId: string): Promise<void> {
       }
       if (monitoredStopId !== stopId) return;
     }
-    const positions = [...byTripId.values()];
+    // The feed positions are already tens of seconds old: draw each vehicle where it probably is now.
+    const positions = await vehicleEstimator.apply([...byTripId.values()]);
+    if (monitoredStopId !== stopId) return;
 
     // For buses currently stopped, look up the realtime predicted departure from the stop they're
     // sitting at, so the chip can show when they're expected to move on.

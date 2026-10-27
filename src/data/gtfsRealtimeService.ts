@@ -1,6 +1,6 @@
 import type { ArrivalInfo } from "../shared/models.js";
 import { fetchAndDecodeFeed } from "./decodeFeedMessage.js";
-import type { RtFeedMessage } from "./gtfsRealtimeTypes.js";
+import type { RtFeedMessage, RtStopTimeUpdate } from "./gtfsRealtimeTypes.js";
 import type { GtfsStaticData } from "./gtfsStaticData.js";
 
 const TRIP_UPDATES_URL = "https://romamobilita.it/sites/default/files/rome_rtgtfs_trip_updates_feed.pb";
@@ -54,6 +54,25 @@ export class GtfsRealtimeService {
 
     arrivals.sort((a, b) => a.arrivalTime.getTime() - b.arrivalTime.getTime());
     return arrivals;
+  }
+
+  /**
+   * The predicted stops still ahead of each given trip, as the TripUpdates feed lists them (the feed
+   * drops a stop as soon as the vehicle has passed it) — what the position estimate walks along.
+   * Trips the feed does not mention are simply left out.
+   */
+  async getStopTimeUpdatesForTrips(tripIds: ReadonlySet<string>): Promise<Map<string, RtStopTimeUpdate[]>> {
+    const result = new Map<string, RtStopTimeUpdate[]>();
+    if (tripIds.size === 0) return result;
+
+    const feed = await this.getTripUpdatesFeed();
+    for (const entity of feed.entity ?? []) {
+      const tripUpdate = entity.tripUpdate;
+      const tripId = tripUpdate?.trip?.tripId;
+      if (!tripUpdate || !tripId || !tripIds.has(tripId)) continue;
+      result.set(tripId, tripUpdate.stopTimeUpdate ?? []);
+    }
+    return result;
   }
 
   /**

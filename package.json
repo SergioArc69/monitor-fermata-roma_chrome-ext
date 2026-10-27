@@ -1,14 +1,15 @@
 {
   "name": "monitor-fermata-atac-roma-extension",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
-  "description": "Monitor Fermata ATAC Roma - estensione Chrome (Manifest V3)",
+  "description": "Stally - Monitor Fermata ATAC Roma - estensione Chrome (Manifest V3)",
   "type": "module",
   "scripts": {
     "generate-proto": "pbjs -t static-module -w es6 -o src/data/generated/gtfsRealtime.js proto/gtfs-realtime.proto && pbts -o src/data/generated/gtfsRealtime.d.ts src/data/generated/gtfsRealtime.js",
     "build": "node build.mjs",
     "watch": "node build.mjs --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node test/run.mjs"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.280",

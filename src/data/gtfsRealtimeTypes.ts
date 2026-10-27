@@ -7,6 +7,8 @@ export interface RtStopTimeEvent {
 
 export interface RtStopTimeUpdate {
   stopId?: string;
+  /** 0 when absent (the decoder fills defaults). */
+  stopSequence?: number;
   arrival?: RtStopTimeEvent;
   departure?: RtStopTimeEvent;
 }
@@ -38,6 +40,10 @@ export interface RtVehiclePosition {
   position?: RtPosition;
   currentStatus?: "INCOMING_AT" | "STOPPED_AT" | "IN_TRANSIT_TO";
   stopId?: string;
+  /** 0 when absent (the decoder fills defaults). */
+  currentStopSequence?: number;
+  /** When the position was taken, POSIX seconds; 0 when absent. */
+  timestamp?: number;
 }
 
 export interface RtFeedEntity {
